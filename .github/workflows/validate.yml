@@ -15,3 +15,13 @@ jobs:
         with:
           node-version: 20
       - run: npm run validate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s skills/wxarticle-archive/tests -p 'test_*.py'
+      - run: npm ci
+        working-directory: workers/wxarticle-archive-api
+      - run: npm run typecheck
+        working-directory: workers/wxarticle-archive-api
+      - run: npm test
+        working-directory: workers/wxarticle-archive-api

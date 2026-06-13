@@ -1,0 +1,4 @@
+interface:
+  display_name: "WxArticle Archive"
+  short_description: "Archive WeChat articles with local or cloud storage modes"
+  default_prompt: "Use $wxarticle-archive to archive WeChat article URLs into local Markdown using inline, md-only, or full mode."

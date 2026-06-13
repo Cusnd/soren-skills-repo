@@ -26,9 +26,18 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 *.pem
 *.key
 *.p12
+
+# Cloudflare local config and generated files
+.wrangler/
+**/.wrangler/
+workers/**/wrangler.jsonc
+workers/**/worker-configuration.d.ts
 
 # OS and editor files
 .DS_Store
@@ -40,3 +49,9 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Local article/archive outputs
+wxarticle_archive/
+articles/
+e2e-output/
+e2e-v2-*/

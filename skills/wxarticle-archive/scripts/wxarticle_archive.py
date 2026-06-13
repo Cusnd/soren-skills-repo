@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+"""Archive public WeChat article URLs through a wxarticle-archive Worker API."""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import mimetypes
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+DEFAULT_OUTPUT_DIR = "wxarticle_archive"
+TERMINAL_STATUSES = {"succeeded", "failed", "partial_failed"}
+IMAGE_PATTERN = re.compile(r"https?://[^\s)\"']+")
+INVALID_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".avif"}
+API_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+class ApiError(RuntimeError):
+    pass
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Archive public WeChat article URLs as local Markdown files."
+    )
+    parser.add_argument("urls", nargs="*", help="One or more mp.weixin.qq.com article URLs")
+    parser.add_argument("--input", help="Text file containing one URL per line")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT_DIR, help="Output directory")
+    parser.add_argument("--api-base", default=os.environ.get("WXARTICLE_API_BASE"))
+    parser.add_argument("--api-key", default=os.environ.get("WXARTICLE_API_KEY"))
+    parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--max-attempts", type=int, default=4)
+    parser.add_argument("--image-workers", type=int, default=8)
+    parser.add_argument("--mode", choices=("inline", "md-only", "full"), default="inline")
+    parser.add_argument("--cloud-images", action="store_true", help="Keep cloud image links in full mode instead of localizing them")
+    parser.add_argument("--no-image-download", action="store_true", help="Save Markdown without downloading images")
+    return parser.parse_args(argv)
+
+
+def read_urls(input_path: str | None, inline_urls: list[str]) -> list[str]:
+    urls: list[str] = []
+    if input_path:
+        with open(input_path, "r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                urls.append(line)
+    urls.extend(u.strip() for u in inline_urls if u.strip())
+    deduped = list(dict.fromkeys(urls))
+    return deduped
+
+
+def safe_filename(name: str, fallback: str = "article") -> str:
+    cleaned = INVALID_FILENAME_CHARS.sub("_", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
+    return cleaned or fallback
+
+
+def unique_path(directory: Path, stem: str, suffix: str = ".md") -> Path:
+    candidate = directory / f"{stem}{suffix}"
+    index = 2
+    while candidate.exists():
+        candidate = directory / f"{stem}_{index}{suffix}"
+        index += 1
+    return candidate
+
+
+def image_extension(url: str, content_type: str | None = None) -> str:
+    path = urllib.parse.urlparse(url).path
+    ext = Path(path).suffix.lower()
+    if ext in IMAGE_EXTS:
+        return ext
+    if content_type:
+        guessed = mimetypes.guess_extension(content_type.split(";", 1)[0].strip())
+        if guessed and guessed.lower() in IMAGE_EXTS:
+            return guessed.lower()
+    return ".jpg"
+
+
+def hashed_image_name(url: str, content_type: str | None = None) -> str:
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+    return f"{digest}{image_extension(url, content_type)}"
+
+
+def is_image_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.lower()
+    return (
+        parsed.netloc.endswith("mmbiz.qpic.cn")
+        or parsed.netloc.endswith("mmbiz.qlogo.cn")
+        or parsed.netloc.endswith("mmbiz.qpic.com")
+        or Path(path).suffix.lower() in IMAGE_EXTS
+    )
+
+
+def request_json(
+    method: str,
+    api_base: str,
+    path: str,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    url = api_base.rstrip("/") + path
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
+            "X-API-Key": api_key,
+            "User-Agent": API_USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as err:
+            raise ApiError(f"HTTP {exc.code}: {raw}") from err
+        raise ApiError(data.get("error") or f"HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise ApiError(str(exc)) from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiError(f"API returned invalid JSON: {raw[:200]}") from exc
+    if not isinstance(data, dict):
+        raise ApiError("API returned a non-object JSON payload")
+    return data
+
+
+def archive_inline(api_base: str, api_key: str, url: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        api_base,
+        "/v2/archive/inline",
+        api_key,
+        {"url": url, "options": {"downloadImages": False}},
+    )
+
+
+def submit_job(api_base: str, api_key: str, urls: list[str], max_attempts: int, mode: str) -> str:
+    data = request_json(
+        "POST",
+        api_base,
+        "/v2/jobs",
+        api_key,
+        {"urls": urls, "mode": mode, "options": {"maxAttempts": max_attempts}},
+    )
+    job_id = data.get("jobId")
+    if not isinstance(job_id, str) or not job_id:
+        raise ApiError("API response did not include jobId")
+    return job_id
+
+
+def poll_job(
+    api_base: str,
+    api_key: str,
+    job_id: str,
+    poll_interval: float,
+        timeout: float,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    last_status = None
+    while True:
+        data = request_json("GET", api_base, f"/v2/jobs/{job_id}", api_key)
+        status = str(data.get("status", "unknown"))
+        counts = data.get("counts", {})
+        if status != last_status:
+            print(f"JOB:{job_id} STATUS:{status} COUNTS:{json.dumps(counts, ensure_ascii=False)}")
+            last_status = status
+        if status in TERMINAL_STATUSES:
+            return data
+        if time.monotonic() - started > timeout:
+            raise ApiError(f"Timed out waiting for job {job_id}")
+        time.sleep(max(0.2, poll_interval))
+
+
+def fetch_result(api_base: str, api_key: str, job_id: str, item_id: str) -> dict[str, Any]:
+    return request_json("GET", api_base, f"/v2/jobs/{job_id}/results/{item_id}", api_key)
+
+
+def download_image(
+    url: str,
+    replace_url: str,
+    images_dir: Path,
+    referer: str | None,
+    api_key: str | None = None,
+) -> tuple[str, str | None]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+        ),
+        "Referer": referer or "https://mp.weixin.qq.com/",
+    }
+    if api_key:
+        headers["X-API-Key"] = api_key
+    req = urllib.request.Request(
+        url,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            content_type = resp.headers.get("Content-Type")
+            local_name = hashed_image_name(url, content_type)
+            dest = images_dir / local_name
+            data = resp.read()
+        if not data:
+            return url, None
+        if not dest.exists():
+            with open(dest, "wb") as fh:
+                fh.write(data)
+        return replace_url, local_name
+    except Exception:
+        return replace_url, None
+
+
+def cloud_image_map(result: dict[str, Any], api_base: str) -> dict[str, str]:
+    images = result.get("cloudImages") or []
+    mapped: dict[str, str] = {}
+    if not isinstance(images, list):
+        return mapped
+    for item in images:
+        if not isinstance(item, dict):
+            continue
+        original = item.get("originalUrl")
+        cloud_url = item.get("url")
+        if isinstance(original, str) and isinstance(cloud_url, str) and cloud_url:
+            mapped[original] = urllib.parse.urljoin(api_base.rstrip("/") + "/", cloud_url.lstrip("/"))
+    return mapped
+
+
+def localize_images(
+    markdown: str,
+    image_urls: list[str],
+    images_dir: Path,
+    referer: str | None,
+    workers: int,
+    api_key: str | None = None,
+    cloud_sources: dict[str, str] | None = None,
+) -> str:
+    discovered = [u for u in IMAGE_PATTERN.findall(markdown) if is_image_url(u)]
+    urls = list(dict.fromkeys(image_urls + discovered))
+    if not urls:
+        return markdown
+
+    pairs = [(cloud_sources.get(u, u) if cloud_sources else u, u) for u in urls]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        futures = [
+            executor.submit(download_image, download_url, replace_url, images_dir, referer, api_key if download_url != replace_url else None)
+            for download_url, replace_url in pairs
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            original, local_name = future.result()
+            if local_name:
+                markdown = markdown.replace(original, f"./images/{local_name}")
+    return markdown
+
+
+def save_result(
+    result: dict[str, Any],
+    output_dir: Path,
+    image_workers: int,
+    api_base: str,
+    api_key: str,
+    download_images: bool,
+    keep_cloud_images: bool,
+) -> Path:
+    title = str(result.get("title") or "article")
+    url = str(result.get("url") or "")
+    markdown = str(result.get("markdown") or "")
+    raw_images = result.get("images") or []
+    images = [str(u) for u in raw_images if isinstance(u, str)]
+    cloud_sources = cloud_image_map(result, api_base)
+
+    if keep_cloud_images and cloud_sources:
+        for original, cloud_url in cloud_sources.items():
+            markdown = markdown.replace(original, cloud_url)
+    elif download_images:
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        markdown = localize_images(markdown, images, images_dir, url, image_workers, api_key, cloud_sources)
+
+    path = unique_path(output_dir, safe_filename(title))
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(markdown.rstrip() + "\n")
+    return path
+
+
+def collect_success_items(job: dict[str, Any]) -> list[dict[str, str]]:
+    items = job.get("items", [])
+    if not isinstance(items, list):
+        return []
+    successes: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") == "succeeded" and isinstance(item.get("itemId"), str):
+            successes.append({"itemId": item["itemId"], "url": str(item.get("url", ""))})
+    return successes
+
+
+def collect_failures(job: dict[str, Any]) -> list[tuple[str, str]]:
+    items = job.get("items", [])
+    failures: list[tuple[str, str]] = []
+    if not isinstance(items, list):
+        return failures
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") == "failed":
+            failures.append((str(item.get("url", "")), str(item.get("error", "unknown error"))))
+    return failures
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    if not args.api_base:
+        print("ERROR: missing API base. Set WXARTICLE_API_BASE or pass --api-base.", file=sys.stderr)
+        return 2
+    if not args.api_key:
+        print("ERROR: missing API key. Set WXARTICLE_API_KEY or pass --api-key.", file=sys.stderr)
+        return 2
+
+    urls = read_urls(args.input, args.urls)
+    if not urls:
+        print("ERROR: no URLs provided. Pass URLs or use --input urls.txt.", file=sys.stderr)
+        return 2
+
+    output_dir = Path(args.output).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved: list[Path] = []
+    failures: list[tuple[str, str]] = []
+
+    if args.mode == "inline":
+        print(f"[1/3] Archiving {len(urls)} URL(s) inline via {args.api_base.rstrip('/')}")
+        for url in urls:
+            try:
+                result = archive_inline(args.api_base, args.api_key, url)
+                print(f"[2/3] Saving {result.get('title') or url}")
+                path = save_result(
+                    result,
+                    output_dir,
+                    max(1, args.image_workers),
+                    args.api_base,
+                    args.api_key,
+                    not args.no_image_download,
+                    False,
+                )
+                saved.append(path)
+                print(f"SAVED:{path}")
+            except Exception as exc:
+                failures.append((url, str(exc)))
+        print("[3/3] Summary")
+    else:
+        print(f"[1/5] Submitting {len(urls)} URL(s) to {args.api_base.rstrip()} in {args.mode} mode")
+        job_id = submit_job(args.api_base, args.api_key, urls, max(1, args.max_attempts), args.mode)
+
+        print(f"[2/5] Waiting for job {job_id}")
+        job = poll_job(args.api_base, args.api_key, job_id, args.poll_interval, args.timeout)
+
+        print("[3/5] Fetching converted results")
+        for item in collect_success_items(job):
+            result = fetch_result(args.api_base, args.api_key, job_id, item["itemId"])
+            print(f"[4/5] Saving {result.get('title') or item['url']}")
+            path = save_result(
+                result,
+                output_dir,
+                max(1, args.image_workers),
+                args.api_base,
+                args.api_key,
+                not args.no_image_download,
+                args.cloud_images,
+            )
+            saved.append(path)
+            print(f"SAVED:{path}")
+        failures.extend(collect_failures(job))
+        print("[5/5] Summary")
+
+    print(f"Saved {len(saved)} article(s) to {output_dir}")
+    for url, reason in failures:
+        print(f"FAILED:{url} | {reason}")
+    return 0 if saved or not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

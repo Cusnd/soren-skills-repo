@@ -31,6 +31,21 @@ Each server should include:
 - tests or smoke checks for core tools
 - an example client configuration when useful
 
+## Workers
+
+Cloudflare Workers live in `workers/<worker-name>/` when they support a skill or MCP server.
+
+Each Worker should include:
+
+- a README with purpose, public endpoints, setup, and deployment notes
+- a runnable project manifest, usually `package.json`
+- source files under `src/`
+- tests or smoke checks for core routes and queue handlers
+- migrations under `migrations/` when D1 schema is required
+- sanitized `wrangler.example.jsonc` only
+
+Do not commit real `wrangler.jsonc`, `.dev.vars`, account IDs, production database IDs, API keys, or generated Worker bundles.
+
 ## Templates
 
 Templates live in `templates/` and are not validated as production skills or servers. Keep templates generic and free of secrets.
@@ -46,3 +61,4 @@ Use semantic versions for reusable MCP server packages. For skills, document mea
 - README explains what changed
 - MCP servers include a clear runtime and transport story
 - skills include concise trigger descriptions in frontmatter
+- Worker projects include example config only

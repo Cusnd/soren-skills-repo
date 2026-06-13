@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const root = process.cwd();
 const namePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -18,6 +19,20 @@ function listDirs(path) {
   return readdirSync(path)
     .filter((entry) => statSync(join(path, entry)).isDirectory())
     .filter((entry) => !entry.startsWith("."));
+}
+
+function isGitTracked(path) {
+  const relativePath = relative(root, path).replaceAll("\\", "/");
+
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", relativePath], {
+      cwd: root,
+      stdio: "ignore"
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseFrontmatter(markdown, filePath) {
@@ -122,8 +137,46 @@ function validateMcpServers() {
   }
 }
 
+function validateWorkers() {
+  const workersDir = join(root, "workers");
+  const workerDirs = listDirs(workersDir);
+
+  for (const dirName of workerDirs) {
+    const workerDir = join(workersDir, dirName);
+
+    if (!namePattern.test(dirName)) {
+      errors.push(`workers/${dirName}: folder name must be lowercase hyphen-case`);
+    }
+
+    if (!existsSync(join(workerDir, "README.md"))) {
+      errors.push(`workers/${dirName}: missing README.md`);
+    }
+
+    if (!existsSync(join(workerDir, "package.json"))) {
+      errors.push(`workers/${dirName}: missing package.json`);
+    }
+
+    if (!existsSync(join(workerDir, "src", "index.ts"))) {
+      errors.push(`workers/${dirName}: missing src/index.ts`);
+    }
+
+    if (!existsSync(join(workerDir, "wrangler.example.jsonc"))) {
+      errors.push(`workers/${dirName}: missing sanitized wrangler.example.jsonc`);
+    }
+
+    if (isGitTracked(join(workerDir, "wrangler.jsonc"))) {
+      errors.push(`workers/${dirName}: real wrangler.jsonc must stay untracked and ignored`);
+    }
+
+    if (isGitTracked(join(workerDir, "worker-configuration.d.ts"))) {
+      errors.push(`workers/${dirName}: generated worker-configuration.d.ts must stay untracked`);
+    }
+  }
+}
+
 validateSkills();
 validateMcpServers();
+validateWorkers();
 
 for (const warning of warnings) {
   console.warn(`warning: ${warning}`);

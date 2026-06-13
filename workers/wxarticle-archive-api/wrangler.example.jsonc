@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wxarticle-archive-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  // "routes": [{ "pattern": "wxarticle-api.example.com", "custom_domain": true }],
+
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  },
+
+  "secrets": {
+    "required": ["WXARTICLE_API_KEY"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wxarticle_archive",
+      "database_id": "replace-with-d1-database-id",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "RESULTS",
+      "bucket_name": "wxarticle-archive-results"
+    }
+  ],
+
+  "queues": {
+    "producers": [
+      {
+        "binding": "ARTICLE_QUEUE",
+        "queue": "wxarticle-archive-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "wxarticle-archive-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 30
+      }
+    ]
+  }
+}

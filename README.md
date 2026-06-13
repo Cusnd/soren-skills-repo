@@ -1,11 +1,12 @@
 # Soren Skills Repo
 
-A public workspace for maintaining Codex skills and Model Context Protocol (MCP) servers.
+A public workspace for maintaining Codex skills, Model Context Protocol (MCP) servers, and supporting runtime projects.
 
 ## Repository Layout
 
 - `skills/` - Production skill folders. Each skill folder should contain a required `SKILL.md` and optional bundled resources.
 - `mcp/servers/` - MCP server projects that expose tools, resources, or prompts.
+- `workers/` - Cloudflare Worker projects used by skills or MCP tools.
 - `templates/skill/` - Starter structure for a new skill.
 - `templates/mcp-server-typescript/` - Starter TypeScript stdio MCP server.
 - `docs/` - Repository conventions, authoring notes, and publishing guidance.
@@ -31,6 +32,14 @@ Then edit:
 - `skills/my-skill/agents/openai.yaml`
 - any needed `scripts/`, `references/`, or `assets/`
 
+Create a new Worker project:
+
+```bash
+mkdir -p workers/my-worker
+```
+
+Include a README, runnable manifest, source files, tests, migrations where needed, and only example deployment configuration. Keep real `wrangler.jsonc`, `.dev.vars`, API keys, account IDs, and generated bundles out of Git.
+
 Create a new MCP server:
 
 ```bash
@@ -39,12 +48,13 @@ cp -R templates/mcp-server-typescript mcp/servers/my-server
 
 Then update the package name, server name, README, and tool/resource/prompt implementations.
 
-## Public Repo Rules
+## Repository Safety Rules
 
 - Do not commit secrets, private tokens, API keys, local credentials, or personal data.
 - Keep skill `SKILL.md` files concise and procedural.
 - Put detailed skill reference material in `references/`, reusable code in `scripts/`, and output assets in `assets/`.
 - Prefer small, testable MCP tools with clear input schemas and predictable responses.
+- Put real Cloudflare deployment config in ignored `wrangler.jsonc`; commit only sanitized `wrangler.example.jsonc`.
 - Run `npm run validate` before publishing or opening a pull request.
 
 ## License
