@@ -1,0 +1,12 @@
+{
+  "name": "soren-skills-repo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-repo.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,3 @@
+display_name: Example Skill
+short_description: Replace this with a human-facing summary of the skill.
+default_prompt: Use $example-skill to complete the requested workflow.
