@@ -10,6 +10,7 @@ Generic crawler:
 
 - `POST /v3/crawl/inline` archives one public HTTPS webpage and returns Markdown, cleaned HTML when requested, links, images, metadata, and diagnostics.
 - `POST /v3/pages/inline` is a compatibility alias for the same behavior.
+- Optional cache/history can be enabled per request with `options.store`, `options.cacheMode`, and `options.cacheTtlSeconds`.
 
 Screenshots:
 
@@ -67,6 +68,17 @@ Generic page strategy values:
 - `never`: static fetch only.
 - `fallback`: static fetch first, Browser Run only if needed.
 - `always`: Browser Run rendered extraction.
+
+Optional cache values for v3 generic crawler:
+
+- Default: `store:false`, `cacheMode:"none"`, `cacheTtlSeconds:86400`.
+- `store:true`: fetch fresh and write one R2 result plus D1 URL/snapshot records.
+- `fresh`: fetch fresh and store.
+- `history-only`: fetch fresh and store a history snapshot.
+- `reuse-if-fresh`: return the latest stored snapshot inside the TTL; otherwise fetch fresh and store.
+- `stale-while-refresh`: return stale cache immediately and schedule a background refresh when possible.
+
+The cache migration is `migrations/0004_crawl_cache.sql`; apply it before sending requests with storage/cache enabled.
 
 ## Checks
 

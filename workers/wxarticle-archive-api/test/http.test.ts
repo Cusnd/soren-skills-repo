@@ -7,6 +7,20 @@ import { handleRequest } from "../src/http";
 const fixture = readFileSync(join(process.cwd(), "test/fixtures/wechat-article.html"), "utf-8");
 const webpageFixture = readFileSync(join(process.cwd(), "test/fixtures/webpage.html"), "utf-8");
 const challengeFixture = "<html><head><title>Just a moment...</title></head><body>Checking if the site connection is secure</body></html>";
+const cachedPage = {
+  url: "https://example.com/articles/fixture",
+  source: "example.com",
+  fetchedAt: new Date().toISOString(),
+  title: "Cached Fixture",
+  description: "Cached copy",
+  canonicalUrl: "https://example.com/articles/fixture",
+  markdown: "# Cached Fixture\n\nStored body.",
+  html: "<article><p>Stored body.</p></article>",
+  images: [],
+  links: ["https://example.com/docs"],
+  strategyUsed: "htmlrewriter",
+  rendered: false
+};
 
 function mockStatement() {
   return {
@@ -42,6 +56,37 @@ function mockEnv(): Env {
     },
     BROWSER: browser
   } as unknown as Env;
+}
+
+function mockCachedEnv(fetchedAt: string): Env {
+  const env = mockEnv();
+  const row = {
+    snapshot_id: "snapshot-1",
+    url_hash: "url-hash",
+    url: cachedPage.url,
+    result_key: "crawl/url-hash/snapshot-1.json",
+    content_hash: "content-hash",
+    fetched_at: fetchedAt,
+    title: cachedPage.title,
+    canonical_url: cachedPage.canonicalUrl,
+    strategy_used: cachedPage.strategyUsed,
+    rendered: 0,
+    markdown_chars: cachedPage.markdown.length,
+    html_chars: cachedPage.html.length,
+    image_count: 0,
+    link_count: 1,
+    error: null
+  };
+  const first = vi.fn(async () => row);
+  const run = vi.fn(async () => ({ success: true }));
+  const all = vi.fn(async () => ({ results: [] }));
+  env.DB.prepare = vi.fn(() => ({
+    bind: vi.fn(() => ({ first, run, all }))
+  })) as unknown as D1Database["prepare"];
+  env.RESULTS.get = vi.fn(async () => ({
+    json: vi.fn(async () => cachedPage)
+  })) as unknown as R2Bucket["get"];
+  return env;
 }
 
 describe("http api", () => {
@@ -267,6 +312,95 @@ describe("http api", () => {
     expect(body.images).toEqual(["https://example.com/images/example.jpg"]);
     expect(body.links).toContain("https://example.com/docs");
     expect(env.BROWSER.quickAction).not.toHaveBeenCalled();
+    expect(env.RESULTS.put).not.toHaveBeenCalled();
+    expect(env.DB.batch).not.toHaveBeenCalled();
+  });
+
+  it("stores v3 page archives when explicitly requested", async () => {
+    const env = mockEnv();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(webpageFixture, { status: 200, headers: { "Content-Type": "text/html" } }))
+    );
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/crawl/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({
+          url: "https://example.com/articles/fixture",
+          options: { store: true }
+        })
+      }),
+      env
+    );
+    const body = await response.json() as { cache: { status: string; stored: boolean; resultKey: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.cache).toMatchObject({ status: "stored", stored: true });
+    expect(body.cache.resultKey).toContain("crawl/");
+    expect(env.RESULTS.put).toHaveBeenCalledWith(expect.stringContaining("crawl/"), expect.any(String), expect.any(Object));
+    expect(env.DB.batch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns fresh v3 cache hits without fetching the page again", async () => {
+    const env = mockCachedEnv(new Date().toISOString());
+    const fetchMock = vi.fn(async () => new Response(webpageFixture, { status: 200, headers: { "Content-Type": "text/html" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/crawl/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({
+          url: "https://example.com/articles/fixture",
+          options: { cacheMode: "reuse-if-fresh", cacheTtlSeconds: 3600 }
+        })
+      }),
+      env
+    );
+    const body = await response.json() as { title: string; cache: { status: string; snapshotId: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.title).toBe("Cached Fixture");
+    expect(body.cache).toMatchObject({ status: "hit", snapshotId: "snapshot-1" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(env.RESULTS.put).not.toHaveBeenCalled();
+  });
+
+  it("returns stale v3 cache entries while scheduling a refresh", async () => {
+    const staleFetchedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const env = mockCachedEnv(staleFetchedAt);
+    const fetchMock = vi.fn(async () => new Response(webpageFixture, { status: 200, headers: { "Content-Type": "text/html" } }));
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: vi.fn((promise: Promise<unknown>) => {
+        pending.push(promise);
+      })
+    } as unknown as ExecutionContext;
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/crawl/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({
+          url: "https://example.com/articles/fixture",
+          options: { cacheMode: "stale-while-refresh", cacheTtlSeconds: 60 }
+        })
+      }),
+      env,
+      ctx
+    );
+    const body = await response.json() as { title: string; cache: { status: string; refresh: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.title).toBe("Cached Fixture");
+    expect(body.cache).toMatchObject({ status: "stale", refresh: "scheduled" });
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+    await Promise.all(pending);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(env.RESULTS.put).toHaveBeenCalledWith(expect.stringContaining("crawl/"), expect.any(String), expect.any(Object));
   });
 
   it("accepts the generic v3 crawl alias and WEB_ARCHIVE_API_KEY", async () => {

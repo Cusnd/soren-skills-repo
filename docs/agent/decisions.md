@@ -6,3 +6,4 @@
 - 2026-06-15: Add rehype/unified as an explicit strategy for AST-based sanitizer comparison, not as the default path.
 - 2026-06-15: Use a shared allowlist cleaner after each HTML-producing path to keep cleaned HTML policy consistent.
 - 2026-06-15: Make generic Web Archive/Crawler the user-facing product framing, but keep legacy folder names and v2 WeChat endpoints for local ignored config, deployed resource continuity, and existing clients.
+- 2026-06-15: Add v3 crawl cache/history as explicit opt-in behavior backed by D1 metadata and R2 snapshots; default inline crawls still do not persist page content.

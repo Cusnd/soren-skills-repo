@@ -14,8 +14,40 @@ import {
   type ScreenshotOptions,
   type ScreenshotResult
 } from "./types";
+import type { PageCacheInfo, PageResult } from "./webpage";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+interface CrawlSnapshotRow {
+  snapshot_id: string;
+  url_hash: string;
+  url: string;
+  result_key: string | null;
+  content_hash: string | null;
+  fetched_at: string;
+  title: string | null;
+  canonical_url: string | null;
+  strategy_used: string | null;
+  rendered: number;
+  markdown_chars: number | null;
+  html_chars: number | null;
+  image_count: number | null;
+  link_count: number | null;
+  error: string | null;
+}
+
+export interface StoredCrawlSnapshot {
+  page: PageResult;
+  cache: Required<Pick<PageCacheInfo, "snapshotId" | "resultKey" | "storedAt">> &
+    Pick<PageCacheInfo, "contentHash" | "ageSeconds">;
+}
+
+export interface StoredCrawlSnapshotMeta {
+  snapshotId: string;
+  resultKey: string;
+  contentHash: string;
+  storedAt: string;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -45,9 +77,33 @@ export function screenshotKey(screenshotId: string): string {
   return `screenshots/${screenshotId}.png`;
 }
 
+export function crawlResultKey(urlHash: string, snapshotId: string): string {
+  return `crawl/${urlHash}/${snapshotId}.json`;
+}
+
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function withoutCache(page: PageResult): PageResult {
+  const copy = { ...page };
+  delete copy.cache;
+  return copy;
+}
+
+async function crawlContentHash(page: PageResult): Promise<string> {
+  return sha256Hex(
+    JSON.stringify({
+      title: page.title ?? "",
+      description: page.description ?? "",
+      canonicalUrl: page.canonicalUrl ?? "",
+      markdown: page.markdown ?? "",
+      html: page.html ?? "",
+      images: page.images,
+      links: page.links
+    })
+  );
 }
 
 function imageExtension(url: string, contentType: string | null): string {
@@ -185,6 +241,130 @@ export async function getResult(env: Env, jobId: string, itemId: string): Promis
     return null;
   }
   return object.json<ArticleResult>();
+}
+
+export async function getLatestCrawlSnapshot(env: Env, url: string): Promise<StoredCrawlSnapshot | null> {
+  const urlHash = await sha256Hex(url);
+  const row = await env.DB.prepare(
+    "SELECT * FROM crawl_snapshots WHERE url_hash = ? AND result_key IS NOT NULL ORDER BY fetched_at DESC LIMIT 1"
+  )
+    .bind(urlHash)
+    .first<CrawlSnapshotRow>();
+  if (!row?.result_key) {
+    return null;
+  }
+
+  const object = await env.RESULTS.get(row.result_key);
+  if (!object) {
+    return null;
+  }
+
+  const page = await object.json<PageResult>();
+  const fetchedAtMs = Date.parse(row.fetched_at);
+  const ageSeconds = Number.isFinite(fetchedAtMs) ? Math.max(0, Math.floor((Date.now() - fetchedAtMs) / 1000)) : undefined;
+  return {
+    page: withoutCache(page),
+    cache: {
+      snapshotId: row.snapshot_id,
+      resultKey: row.result_key,
+      contentHash: row.content_hash ?? undefined,
+      storedAt: row.fetched_at,
+      ageSeconds
+    }
+  };
+}
+
+export function isStoredCrawlSnapshotFresh(snapshot: StoredCrawlSnapshot, ttlSeconds: number): boolean {
+  return (snapshot.cache.ageSeconds ?? Number.POSITIVE_INFINITY) <= ttlSeconds;
+}
+
+export async function storeCrawlSnapshot(
+  env: Env,
+  page: PageResult,
+  cacheTtlSeconds: number
+): Promise<StoredCrawlSnapshotMeta> {
+  const urlHash = await sha256Hex(page.url);
+  const snapshotId = crypto.randomUUID();
+  const key = crawlResultKey(urlHash, snapshotId);
+  const contentHash = await crawlContentHash(page);
+  const storedPage = withoutCache(page);
+  const fetchedAt = page.fetchedAt || nowIso();
+
+  await env.RESULTS.put(key, JSON.stringify(storedPage), {
+    httpMetadata: {
+      contentType: "application/json; charset=utf-8"
+    }
+  });
+
+  const statements = [
+    env.DB.prepare(
+      "INSERT INTO crawl_urls (url_hash, url, source, canonical_url, title, description, first_fetched_at, last_fetched_at, last_status, last_snapshot_id, last_result_key, last_content_hash, strategy_used, rendered, cache_ttl_seconds, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(url_hash) DO UPDATE SET url = excluded.url, source = excluded.source, canonical_url = excluded.canonical_url, title = excluded.title, description = excluded.description, last_fetched_at = excluded.last_fetched_at, last_status = excluded.last_status, last_snapshot_id = excluded.last_snapshot_id, last_result_key = excluded.last_result_key, last_content_hash = excluded.last_content_hash, strategy_used = excluded.strategy_used, rendered = excluded.rendered, cache_ttl_seconds = excluded.cache_ttl_seconds, error = NULL"
+    ).bind(
+      urlHash,
+      page.url,
+      page.source,
+      page.canonicalUrl ?? null,
+      page.title ?? null,
+      page.description ?? null,
+      fetchedAt,
+      fetchedAt,
+      "succeeded",
+      snapshotId,
+      key,
+      contentHash,
+      page.strategyUsed,
+      page.rendered ? 1 : 0,
+      cacheTtlSeconds
+    ),
+    env.DB.prepare(
+      "INSERT INTO crawl_snapshots (snapshot_id, url_hash, url, result_key, content_hash, fetched_at, title, canonical_url, strategy_used, rendered, markdown_chars, html_chars, image_count, link_count, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+    ).bind(
+      snapshotId,
+      urlHash,
+      page.url,
+      key,
+      contentHash,
+      fetchedAt,
+      page.title ?? null,
+      page.canonicalUrl ?? null,
+      page.strategyUsed,
+      page.rendered ? 1 : 0,
+      page.markdown?.length ?? null,
+      page.html?.length ?? null,
+      page.images.length,
+      page.links.length
+    )
+  ];
+
+  await env.DB.batch(statements);
+  return {
+    snapshotId,
+    resultKey: key,
+    contentHash,
+    storedAt: fetchedAt
+  };
+}
+
+export async function recordCrawlFailure(
+  env: Env,
+  url: string,
+  error: string,
+  cacheTtlSeconds: number
+): Promise<void> {
+  const urlHash = await sha256Hex(url);
+  const fetchedAt = nowIso();
+  const snapshotId = crypto.randomUUID();
+  const source = new URL(url).hostname;
+  const statements = [
+    env.DB.prepare(
+      "INSERT INTO crawl_urls (url_hash, url, source, canonical_url, title, description, first_fetched_at, last_fetched_at, last_status, last_snapshot_id, last_result_key, last_content_hash, strategy_used, rendered, cache_ttl_seconds, error) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, 0, ?, ?) ON CONFLICT(url_hash) DO UPDATE SET url = excluded.url, source = excluded.source, last_fetched_at = excluded.last_fetched_at, last_status = excluded.last_status, cache_ttl_seconds = excluded.cache_ttl_seconds, error = excluded.error"
+    ).bind(urlHash, url, source, fetchedAt, fetchedAt, "failed", cacheTtlSeconds, error),
+    env.DB.prepare(
+      "INSERT INTO crawl_snapshots (snapshot_id, url_hash, url, result_key, content_hash, fetched_at, title, canonical_url, strategy_used, rendered, markdown_chars, html_chars, image_count, link_count, error) VALUES (?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, ?)"
+    ).bind(snapshotId, urlHash, url, fetchedAt, error)
+  ];
+
+  await env.DB.batch(statements);
 }
 
 export async function markItemProcessing(env: Env, item: ItemRow, attempts: number): Promise<void> {

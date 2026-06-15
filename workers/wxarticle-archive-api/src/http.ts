@@ -5,10 +5,14 @@ import {
   createJob,
   getAsset,
   getJob,
+  getLatestCrawlSnapshot,
   getResult,
   getScreenshot,
+  isStoredCrawlSnapshotFresh,
   listSucceededItems,
+  recordCrawlFailure,
   recordScreenshotFailure,
+  storeCrawlSnapshot,
   storeScreenshot
 } from "./storage";
 import {
@@ -18,7 +22,7 @@ import {
   type AsyncStorageMode,
   type RenderStrategy
 } from "./types";
-import { fetchInlinePage } from "./webpage";
+import { fetchAndConvertPageWithStrategy, parsePageOptions, type PageCacheInfo, type PageOptions, type PageResult } from "./webpage";
 
 interface CreateJobBody {
   urls?: unknown;
@@ -34,6 +38,9 @@ interface CreateJobBody {
     width?: unknown;
     height?: unknown;
     fullPage?: unknown;
+    store?: unknown;
+    cacheMode?: unknown;
+    cacheTtlSeconds?: unknown;
   };
 }
 
@@ -144,7 +151,108 @@ function assetResponse(object: R2ObjectBody): Response {
   return new Response(object.body, { headers });
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+function shouldStorePage(options: PageOptions): boolean {
+  return options.store || options.cacheMode !== "none";
+}
+
+function shouldReadPageCache(options: PageOptions): boolean {
+  return options.cacheMode === "reuse-if-fresh" || options.cacheMode === "stale-while-refresh";
+}
+
+function withCacheInfo(page: PageResult, cache: PageCacheInfo): PageResult {
+  return { ...page, cache };
+}
+
+async function fetchStoreablePage(url: string, env: Env, options: PageOptions, readAttempted: boolean): Promise<PageResult> {
+  let page: PageResult;
+  try {
+    page = await fetchAndConvertPageWithStrategy(url, env.BROWSER, options);
+  } catch (error) {
+    if (shouldStorePage(options)) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await recordCrawlFailure(env, url, message, options.cacheTtlSeconds);
+      } catch (storageError) {
+        const storageMessage = storageError instanceof Error ? storageError.message : String(storageError);
+        console.error(JSON.stringify({ message: "crawl failure record failed", url, error: storageMessage }));
+      }
+    }
+    throw error;
+  }
+
+  if (!shouldStorePage(options)) {
+    return page;
+  }
+  const stored = await storeCrawlSnapshot(env, page, options.cacheTtlSeconds);
+  return withCacheInfo(page, {
+    mode: options.cacheMode,
+    status: readAttempted ? "miss" : "stored",
+    stored: true,
+    ttlSeconds: options.cacheTtlSeconds,
+    snapshotId: stored.snapshotId,
+    resultKey: stored.resultKey,
+    contentHash: stored.contentHash,
+    storedAt: stored.storedAt
+  });
+}
+
+async function refreshStoredPage(url: string, env: Env, options: PageOptions): Promise<void> {
+  try {
+    const page = await fetchAndConvertPageWithStrategy(url, env.BROWSER, options);
+    await storeCrawlSnapshot(env, page, options.cacheTtlSeconds);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      await recordCrawlFailure(env, url, message, options.cacheTtlSeconds);
+    } catch (storageError) {
+      const storageMessage = storageError instanceof Error ? storageError.message : String(storageError);
+      console.error(JSON.stringify({ message: "crawl refresh failure record failed", url, error: storageMessage }));
+    }
+    console.error(JSON.stringify({ message: "crawl cache refresh failed", url, error: message }));
+  }
+}
+
+async function fetchInlineCrawl(body: CreateJobBody, env: Env, ctx?: ExecutionContext): Promise<PageResult> {
+  const pageUrl = parsePublicHttpsUrl(body.url);
+  const options = parsePageOptions(body.options);
+  const readAttempted = shouldReadPageCache(options);
+
+  if (readAttempted) {
+    const cached = await getLatestCrawlSnapshot(env, pageUrl);
+    if (cached) {
+      const cacheBase = {
+        mode: options.cacheMode,
+        ttlSeconds: options.cacheTtlSeconds,
+        snapshotId: cached.cache.snapshotId,
+        resultKey: cached.cache.resultKey,
+        contentHash: cached.cache.contentHash,
+        storedAt: cached.cache.storedAt,
+        ageSeconds: cached.cache.ageSeconds
+      };
+      if (isStoredCrawlSnapshotFresh(cached, options.cacheTtlSeconds)) {
+        return withCacheInfo(cached.page, {
+          ...cacheBase,
+          status: "hit"
+        });
+      }
+      if (options.cacheMode === "stale-while-refresh") {
+        const refresh = ctx ? "scheduled" : "unavailable";
+        if (ctx) {
+          ctx.waitUntil(refreshStoredPage(pageUrl, env, options));
+        }
+        return withCacheInfo(cached.page, {
+          ...cacheBase,
+          status: "stale",
+          refresh
+        });
+      }
+    }
+  }
+
+  return fetchStoreablePage(pageUrl, env, options, readAttempted);
+}
+
+export async function handleRequest(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
 
   try {
@@ -212,7 +320,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
     if (request.method === "POST" && (url.pathname === "/v3/pages/inline" || url.pathname === "/v3/crawl/inline")) {
       const body = await readJsonBody(request);
-      const page = await fetchInlinePage(body, env.BROWSER);
+      const page = await fetchInlineCrawl(body, env, ctx);
       return json(page);
     }
 
@@ -274,6 +382,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           message.includes("renderStrategy") ||
           message.includes("strategy must") ||
           message.includes("output must") ||
+          message.includes("cacheMode must") ||
+          message.includes("cacheTtlSeconds must") ||
           message.includes("url") ||
           message.includes("Only public") ||
           message.includes("Private, local")

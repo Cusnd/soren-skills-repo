@@ -52,10 +52,20 @@ describe("webpage archival", () => {
       strategy: "auto",
       output: "both",
       renderStrategy: "fallback",
-      includeDiagnostics: true
+      includeDiagnostics: true,
+      store: false,
+      cacheMode: "none",
+      cacheTtlSeconds: 86400
     });
     expect(() => parsePageOptions({ strategy: "bad" })).toThrow("strategy must");
     expect(() => parsePageOptions({ output: "bad" })).toThrow("output must");
+    expect(() => parsePageOptions({ cacheMode: "bad" })).toThrow("cacheMode must");
+    expect(() => parsePageOptions({ cacheTtlSeconds: "bad" })).toThrow("cacheTtlSeconds must");
+    expect(parsePageOptions({ store: true, cacheMode: "reuse-if-fresh", cacheTtlSeconds: 30 })).toMatchObject({
+      store: true,
+      cacheMode: "reuse-if-fresh",
+      cacheTtlSeconds: 60
+    });
   });
 
   it("detects common challenge pages", () => {

@@ -9,12 +9,29 @@ import { MAX_HTML_BYTES, MIN_USEFUL_MARKDOWN_CHARS, type BrowserQuickAction, typ
 
 export type PageStrategy = "auto" | "browser-markdown" | "htmlrewriter" | "rehype";
 export type PageOutput = "both" | "markdown" | "html";
+export type PageCacheMode = "none" | "fresh" | "reuse-if-fresh" | "stale-while-refresh" | "history-only";
 
 export interface PageOptions {
   strategy: PageStrategy;
   output: PageOutput;
   renderStrategy: RenderStrategy;
   includeDiagnostics: boolean;
+  store: boolean;
+  cacheMode: PageCacheMode;
+  cacheTtlSeconds: number;
+}
+
+export interface PageCacheInfo {
+  mode: PageCacheMode;
+  status: "hit" | "miss" | "stale" | "stored";
+  stored?: boolean;
+  refresh?: "scheduled" | "unavailable";
+  ageSeconds?: number;
+  ttlSeconds: number;
+  snapshotId?: string;
+  resultKey?: string;
+  contentHash?: string;
+  storedAt?: string;
 }
 
 export interface PageDiagnostics {
@@ -47,6 +64,7 @@ export interface PageResult {
   links: string[];
   strategyUsed: Exclude<PageStrategy, "auto">;
   rendered: boolean;
+  cache?: PageCacheInfo;
   diagnostics?: PageDiagnostics;
 }
 
@@ -727,13 +745,36 @@ function parseRenderStrategy(value: unknown): RenderStrategy {
   throw new Error("renderStrategy must be never, fallback, or always");
 }
 
+function parseCacheMode(value: unknown): PageCacheMode {
+  if (value === undefined || value === null) {
+    return "none";
+  }
+  if (value === "none" || value === "fresh" || value === "reuse-if-fresh" || value === "stale-while-refresh" || value === "history-only") {
+    return value;
+  }
+  throw new Error("cacheMode must be none, fresh, reuse-if-fresh, stale-while-refresh, or history-only");
+}
+
+function parseCacheTtlSeconds(value: unknown): number {
+  if (value === undefined || value === null) {
+    return 24 * 60 * 60;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("cacheTtlSeconds must be a finite number");
+  }
+  return Math.max(60, Math.min(30 * 24 * 60 * 60, Math.trunc(value)));
+}
+
 export function parsePageOptions(value: unknown): PageOptions {
   const options = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   return {
     strategy: parseStrategy(options.strategy),
     output: parseOutput(options.output),
     renderStrategy: parseRenderStrategy(options.renderStrategy),
-    includeDiagnostics: typeof options.includeDiagnostics === "boolean" ? options.includeDiagnostics : true
+    includeDiagnostics: typeof options.includeDiagnostics === "boolean" ? options.includeDiagnostics : true,
+    store: typeof options.store === "boolean" ? options.store : false,
+    cacheMode: parseCacheMode(options.cacheMode),
+    cacheTtlSeconds: parseCacheTtlSeconds(options.cacheTtlSeconds)
   };
 }
 

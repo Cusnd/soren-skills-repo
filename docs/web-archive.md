@@ -31,7 +31,10 @@ Request defaults:
     "strategy": "auto",
     "output": "both",
     "renderStrategy": "fallback",
-    "includeDiagnostics": true
+    "includeDiagnostics": true,
+    "store": false,
+    "cacheMode": "none",
+    "cacheTtlSeconds": 86400
   }
 }
 ```
@@ -46,6 +49,38 @@ Strategies:
 The generic crawler accepts only public HTTPS URLs. It rejects localhost, private IPs, credentialed URLs, and unsupported protocols. Cleaned HTML removes scripts, styles, forms, iframes, embedded objects, SVG/MathML, event attributes, inline styles, and unsafe URL protocols.
 
 Challenge pages such as Cloudflare `Just a moment...`, human verification, CAPTCHA, and access-security interstitials are treated as failed extraction results instead of archived content. In `auto` mode, a static challenge page triggers Browser Run fallback; if Browser Run still returns a challenge page, the API returns HTTP 422.
+
+## Optional Crawl Cache
+
+The generic v3 inline endpoints are privacy-first by default: they do not write crawled page content to D1 or R2 unless the request explicitly asks for storage or cache behavior.
+
+Cache options:
+
+- `store: true` fetches a fresh page and writes the result to R2 plus D1 history, without reading old cache first.
+- `cacheMode: "none"` is the default and performs no cache read. With `store: true`, it stores only the fresh result.
+- `cacheMode: "fresh"` always fetches fresh content and stores a new snapshot.
+- `cacheMode: "history-only"` always fetches fresh content and stores a new history snapshot; it is useful when you want audit/history rather than reuse.
+- `cacheMode: "reuse-if-fresh"` returns the latest stored snapshot when it is within `cacheTtlSeconds`; otherwise it fetches fresh and stores the new snapshot.
+- `cacheMode: "stale-while-refresh"` returns a stale snapshot immediately when available, then schedules a background refresh through `ctx.waitUntil`.
+
+Cached responses include:
+
+```json
+{
+  "cache": {
+    "mode": "reuse-if-fresh",
+    "status": "hit",
+    "ageSeconds": 120,
+    "ttlSeconds": 86400,
+    "snapshotId": "snapshot-id",
+    "resultKey": "crawl/url-hash/snapshot-id.json",
+    "contentHash": "sha256",
+    "storedAt": "2026-06-15T00:00:00.000Z"
+  }
+}
+```
+
+Apply Worker migration `0004_crawl_cache.sql` before enabling cache modes in a deployed Worker.
 
 ## WeChat Article Compatibility
 

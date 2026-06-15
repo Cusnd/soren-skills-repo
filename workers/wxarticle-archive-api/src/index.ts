@@ -3,8 +3,8 @@ import { processQueueMessage } from "./queue";
 import type { QueueMessageBody } from "./types";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handleRequest(request, env);
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return handleRequest(request, env, ctx);
   },
 
   async queue(batch: MessageBatch<QueueMessageBody>, env: Env): Promise<void> {
