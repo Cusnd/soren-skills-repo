@@ -1,7 +1,7 @@
 # WxArticle Archive
 
 `wxarticle-archive` is a Codex skill plus Cloudflare Worker API for archiving user-provided public WeChat article URLs into Markdown.
-It supports static article fetch, Cloudflare Browser Run rendered fallback, and public HTTPS full-page screenshots.
+It supports static article fetch, Cloudflare Browser Run rendered fallback, public HTTPS full-page screenshots, and v3 generic public webpage archival.
 
 ## Repository Paths
 
@@ -25,6 +25,33 @@ Cloudflare platform logs and request metadata can still exist outside applicatio
 - `renderStrategy: "fallback"` is the default: static fetch first, then Browser Run only when fetch fails or the extracted body is suspiciously short.
 - `renderStrategy: "always"` forces Browser Run and is also exposed as `POST /v2/archive/rendered`.
 - Screenshot endpoints accept one public `https://` URL, reject local/private hosts, and do not send user cookies.
+
+## Generic Webpage Archive v3
+
+`POST /v3/pages/inline` archives one public HTTPS webpage and returns Markdown, cleaned HTML, links, images, metadata, strategy diagnostics, and Browser Run usage when applicable.
+
+Request defaults:
+
+```json
+{
+  "url": "https://example.com/article",
+  "options": {
+    "strategy": "auto",
+    "output": "both",
+    "renderStrategy": "fallback",
+    "includeDiagnostics": true
+  }
+}
+```
+
+Strategies:
+
+- `auto` is static-first: use the HTMLRewriter cleaner, then fall back to Browser Run `/markdown` when static output is too short or static fetch fails.
+- `browser-markdown` calls Browser Run `markdown` and `content` Quick Actions through the Worker binding.
+- `htmlrewriter` uses Workers-native HTMLRewriter plus the shared allowlist cleaner.
+- `rehype` uses `rehype-parse`, `rehype-sanitize`, and `rehype-stringify`, then the shared allowlist cleaner.
+
+All webpage modes reuse the same public HTTPS validation used for screenshots, including local/private host blocking and credential rejection. The cleaned HTML allowlist removes scripts, styles, forms, iframes, embedded objects, SVG/MathML, event attributes, inline styles, and unsafe URL protocols.
 
 ## Local Skill Usage
 
@@ -64,6 +91,20 @@ Image flags:
 - `POST /v2/screenshots/inline`
 - `POST /v2/screenshots`
 - `GET /v2/screenshots/:screenshotId`
+- `POST /v3/pages/inline`
+
+## Generic Webpage Benchmark
+
+Remote comparison is available after deploying the Worker and setting local API credentials:
+
+```powershell
+cd .\workers\wxarticle-archive-api
+$env:WXARTICLE_API_BASE = "https://wxarticle-api.example.com"
+$env:WXARTICLE_API_KEY = "replace-with-your-api-key"
+npm run benchmark:webpages
+```
+
+The benchmark runs the same URL list against `auto`, `browser-markdown`, `htmlrewriter`, and `rehype`, then reports elapsed time, output size, success rate, rendered status, and `diagnostics.browserMsUsed`.
 
 ## Worker Deployment
 

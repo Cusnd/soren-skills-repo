@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Fixture Web Page</title>
+    <meta name="description" content="A fixture page for generic web archival.">
+    <link rel="canonical" href="/articles/fixture">
+    <style>body { color: red; }</style>
+    <script>alert("nope")</script>
+  </head>
+  <body>
+    <header><nav><a href="/nav">Nav</a></nav></header>
+    <main>
+      <article>
+        <h1>Fixture Web Page</h1>
+        <p onclick="alert('bad')">Hello <strong>generic</strong> archive.</p>
+        <p>
+          Read <a href="/docs">the docs</a>
+          and ignore <a href="javascript:alert('bad')">bad links</a>.
+        </p>
+        <img data-src="/images/example.jpg" alt="Example image" onerror="bad()">
+        <iframe src="https://example.com/embed"></iframe>
+        <table>
+          <tr><th>Name</th><th>Value</th></tr>
+          <tr><td>Mode</td><td>Static</td></tr>
+        </table>
+      </article>
+    </main>
+  </body>
+</html>

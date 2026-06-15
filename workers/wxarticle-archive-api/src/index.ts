@@ -19,3 +19,4 @@ export default {
 export { convertHtmlToArticle, fetchAndConvertArticle, isAllowedWeChatArticleUrl } from "./converter";
 export { handleRequest } from "./http";
 export { processQueueMessage } from "./queue";
+export { fetchAndConvertPageWithStrategy } from "./webpage";

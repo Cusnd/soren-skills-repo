@@ -18,12 +18,16 @@ import {
   type AsyncStorageMode,
   type RenderStrategy
 } from "./types";
+import { fetchInlinePage } from "./webpage";
 
 interface CreateJobBody {
   urls?: unknown;
   mode?: unknown;
   url?: unknown;
   options?: {
+    strategy?: unknown;
+    output?: unknown;
+    includeDiagnostics?: unknown;
     maxAttempts?: unknown;
     downloadImages?: unknown;
     renderStrategy?: unknown;
@@ -198,6 +202,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
     }
 
+    if (request.method === "POST" && url.pathname === "/v3/pages/inline") {
+      const body = await readJsonBody(request);
+      const page = await fetchInlinePage(body, env.BROWSER);
+      return json(page);
+    }
+
     const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
     if (request.method === "GET" && jobMatch) {
       const job = await getJob(env, jobMatch[1]);
@@ -253,6 +263,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       message.startsWith("Request body") ||
       message.includes("mode must") ||
       message.includes("renderStrategy") ||
+      message.includes("strategy must") ||
+      message.includes("output must") ||
       message.includes("url") ||
       message.includes("Only public") ||
       message.includes("Private, local")

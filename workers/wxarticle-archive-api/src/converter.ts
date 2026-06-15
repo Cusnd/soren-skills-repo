@@ -257,7 +257,7 @@ function hasUsefulMarkdownBody(article: ArticleResult): boolean {
   return markdownBodyChars(article.markdown) >= MIN_USEFUL_MARKDOWN_CHARS || article.images.length > 0;
 }
 
-async function readBoundedText(response: Response, maxBytes = MAX_HTML_BYTES): Promise<string> {
+export async function readBoundedText(response: Response, maxBytes = MAX_HTML_BYTES): Promise<string> {
   const length = response.headers.get("Content-Length");
   if (length && Number(length) > maxBytes) {
     response.body?.cancel();

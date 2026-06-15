@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../src/http";
 
 const fixture = readFileSync(join(process.cwd(), "test/fixtures/wechat-article.html"), "utf-8");
+const webpageFixture = readFileSync(join(process.cwd(), "test/fixtures/webpage.html"), "utf-8");
 
 function mockStatement() {
   return {
@@ -224,6 +225,55 @@ describe("http api", () => {
         method: "POST",
         headers: { "X-API-Key": "secret" },
         body: JSON.stringify({ url: "https://localhost/admin" })
+      }),
+      mockEnv()
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns inline v3 generic page archives", async () => {
+    const env = mockEnv();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(webpageFixture, { status: 200, headers: { "Content-Type": "text/html" } }))
+    );
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/pages/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://example.com/articles/fixture" })
+      }),
+      env
+    );
+    const body = await response.json() as {
+      title: string;
+      strategyUsed: string;
+      rendered: boolean;
+      html: string;
+      markdown: string;
+      images: string[];
+      links: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.title).toBe("Fixture Web Page");
+    expect(body.strategyUsed).toBe("htmlrewriter");
+    expect(body.rendered).toBe(false);
+    expect(body.html).toContain("<article>");
+    expect(body.markdown).toContain("Hello **generic** archive.");
+    expect(body.images).toEqual(["https://example.com/images/example.jpg"]);
+    expect(body.links).toContain("https://example.com/docs");
+    expect(env.BROWSER.quickAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects local v3 page URLs", async () => {
+    const response = await handleRequest(
+      new Request("https://api.test/v3/pages/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://127.0.0.1/admin" })
       }),
       mockEnv()
     );

@@ -11,7 +11,7 @@ export type AsyncStorageMode = Exclude<StorageMode, "inline">;
 export type RenderStrategy = "never" | "fallback" | "always";
 
 export interface BrowserQuickAction {
-  quickAction(action: "content" | "screenshot", options: any): Promise<Response>;
+  quickAction(action: "content" | "markdown" | "screenshot", options: any): Promise<Response>;
 }
 
 export interface QueueMessageBody {
