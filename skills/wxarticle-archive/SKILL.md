@@ -51,8 +51,8 @@ Use this skill to archive public HTTPS URLs that the user already has. Generic w
    - In WeChat `md-only` or `full` mode, submit `POST /v2/jobs`, poll `GET /v2/jobs/<jobId>`, then fetch `GET /v2/jobs/<jobId>/results/<itemId>`.
    - With `--render-strategy fallback`, let the Worker try static fetch first, then Browser Run only if needed.
    - With `--screenshot`, call `POST /v2/screenshots/inline` or `POST /v2/screenshots`, then save the PNG locally.
-   - Save Markdown files into the output directory.
-   - Download images into `<output>/images` and rewrite Markdown image URLs to local relative paths unless `--no-image-download` or `--cloud-images` is used.
+   - Save each archived URL into `<output>/<url-folder>/index.md`, where the URL folder is derived from the URL with dots replaced by underscores.
+   - Download images into `<output>/<url-folder>/images` and rewrite Markdown image URLs to local relative paths unless `--no-image-download` or `--cloud-images` is used.
 
 4. Report the final summary. Include:
 

@@ -94,6 +94,8 @@ python .\skills\wxarticle-archive\scripts\wxarticle_archive.py --input .\wechat-
 python .\skills\wxarticle-archive\scripts\wxarticle_archive.py --screenshot "https://example.com/" --screenshot-inline --output .\captures
 ```
 
+Archive output uses one directory per URL. The directory stem is derived from the URL with dots replaced by underscores, for example `https://mp.weixin.qq.com/s/example` saves to `.\archive\mp_weixin_qq_com_s_example\index.md`, with downloaded images under `.\archive\mp_weixin_qq_com_s_example\images\`.
+
 Image flags:
 
 - `--no-image-download` saves Markdown only.

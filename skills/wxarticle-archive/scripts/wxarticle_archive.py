@@ -106,12 +106,38 @@ def safe_filename(name: str, fallback: str = "article") -> str:
     return cleaned or fallback
 
 
+def url_folder_stem(url: str, fallback: str = "archive") -> str:
+    parsed = urllib.parse.urlparse(url)
+    parts = [parsed.netloc.replace(".", "_")] if parsed.netloc else []
+    path = parsed.path.strip("/")
+    if path:
+        parts.extend(part for part in path.split("/") if part)
+    if parsed.query:
+        parts.append(hashlib.sha256(parsed.query.encode("utf-8")).hexdigest()[:12])
+    raw = "_".join(parts).replace(".", "_")
+    stem = safe_filename(raw, fallback)
+    if len(stem) <= 120:
+        return stem
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+    return f"{stem[:107].rstrip('_')}_{digest}"
+
+
 def unique_path(directory: Path, stem: str, suffix: str = ".md") -> Path:
     candidate = directory / f"{stem}{suffix}"
     index = 2
     while candidate.exists():
         candidate = directory / f"{stem}_{index}{suffix}"
         index += 1
+    return candidate
+
+
+def unique_directory(directory: Path, stem: str) -> Path:
+    candidate = directory / stem
+    index = 2
+    while candidate.exists():
+        candidate = directory / f"{stem}_{index}"
+        index += 1
+    candidate.mkdir(parents=True, exist_ok=False)
     return candidate
 
 
@@ -381,8 +407,8 @@ def save_result(
     download_images: bool,
     keep_cloud_images: bool,
 ) -> Path:
-    title = str(result.get("title") or result.get("source") or "archive")
     url = str(result.get("url") or "")
+    item_dir = unique_directory(output_dir, url_folder_stem(url))
     markdown = str(result.get("markdown") or "")
     raw_images = result.get("images") or []
     images = [str(u) for u in raw_images if isinstance(u, str)]
@@ -392,11 +418,11 @@ def save_result(
         for original, cloud_url in cloud_sources.items():
             markdown = markdown.replace(original, cloud_url)
     elif download_images:
-        images_dir = output_dir / "images"
+        images_dir = item_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
         markdown = localize_images(markdown, images, images_dir, url, image_workers, api_key, cloud_sources)
 
-    path = unique_path(output_dir, safe_filename(title))
+    path = item_dir / "index.md"
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(markdown.rstrip() + "\n")
     return path

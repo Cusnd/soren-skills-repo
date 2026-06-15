@@ -13,6 +13,7 @@ from scripts.wxarticle_archive import (
     safe_filename,
     save_result,
     screenshot_path,
+    url_folder_stem,
 )
 
 
@@ -32,6 +33,12 @@ class WebArchiveClientTests(unittest.TestCase):
 
     def test_safe_filename_replaces_windows_invalid_characters(self):
         self.assertEqual(safe_filename('a/b\\c:d*e?f"g<h>i|j'), "a_b_c_d_e_f_g_h_i_j")
+
+    def test_url_folder_stem_replaces_dots_and_uses_path(self):
+        self.assertEqual(
+            url_folder_stem("https://mp.weixin.qq.com/s/lNFzhMwxgeo9k5CIvLw0GQ"),
+            "mp_weixin_qq_com_s_lNFzhMwxgeo9k5CIvLw0GQ",
+        )
 
     def test_source_kind_auto_keeps_wechat_specialized(self):
         self.assertTrue(is_wechat_article_url("https://mp.weixin.qq.com/s/example"))
@@ -62,7 +69,8 @@ class WebArchiveClientTests(unittest.TestCase):
                 download_images=False,
                 keep_cloud_images=False,
             )
-            self.assertEqual(path.name, "Hello _ World.md")
+            self.assertEqual(path.parent.name, "mp_weixin_qq_com_s_example")
+            self.assertEqual(path.name, "index.md")
             self.assertEqual(path.read_text(encoding="utf-8"), "# Hello\n\nBody\n")
 
     def test_save_result_can_keep_cloud_image_links(self):
@@ -88,6 +96,7 @@ class WebArchiveClientTests(unittest.TestCase):
                 download_images=True,
                 keep_cloud_images=True,
             )
+            self.assertEqual(path.parent.name, "mp_weixin_qq_com_s_example")
             self.assertIn(
                 "https://web-archive-api.example.com/v2/assets/job/item/hash.jpg",
                 path.read_text(encoding="utf-8"),
