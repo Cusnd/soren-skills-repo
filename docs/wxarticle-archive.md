@@ -53,6 +53,8 @@ Strategies:
 
 All webpage modes reuse the same public HTTPS validation used for screenshots, including local/private host blocking and credential rejection. The cleaned HTML allowlist removes scripts, styles, forms, iframes, embedded objects, SVG/MathML, event attributes, inline styles, and unsafe URL protocols.
 
+Challenge pages such as Cloudflare `Just a moment...`, human verification, CAPTCHA, and access-security interstitials are treated as failed extraction results instead of archived content. In `auto` mode, a static challenge page triggers Browser Run fallback; if Browser Run still returns a challenge page, the API returns HTTP 422 with a clear error.
+
 ## Local Skill Usage
 
 Use environment variables or explicit flags:

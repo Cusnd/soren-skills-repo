@@ -71,6 +71,11 @@ interface BrowserTextResult {
   browserMsUsed?: number;
 }
 
+interface ChallengeDetection {
+  reason: string;
+  title?: string;
+}
+
 const ATTR_RE = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gu;
 const UNSAFE_BLOCK_TAGS = ["script", "style", "noscript", "iframe", "form", "object", "embed", "svg", "math", "canvas", "template"];
 const UNSAFE_REMOVE_TAGS = new Set([...UNSAFE_BLOCK_TAGS, "input", "button", "select", "textarea", "option"]);
@@ -248,6 +253,55 @@ function extractMetadata(html: string, baseUrl: string, sanitizedHtml: string): 
     description: description || undefined,
     canonicalUrl: extractCanonicalUrl(html, baseUrl)
   };
+}
+
+export function detectChallengePage(input: { title?: string; html?: string; markdown?: string }): ChallengeDetection | null {
+  const title = cleanText(input.title).toLowerCase();
+  const sample = cleanText([input.title, input.html, input.markdown].filter(Boolean).join("\n")).toLowerCase();
+  const hasCloudflareSignal =
+    sample.includes("checking if the site connection is secure") ||
+    sample.includes("enable javascript and cookies to continue") ||
+    sample.includes("cf-browser-verification") ||
+    sample.includes("cf-challenge") ||
+    sample.includes("__cf_chl_") ||
+    sample.includes("cloudflare ray id");
+  const hasHumanVerificationSignal =
+    sample.includes("verify you are human") ||
+    sample.includes("human verification") ||
+    sample.includes("are you a robot") ||
+    sample.includes("complete the security check") ||
+    sample.includes("captcha");
+  const hasAccessChallengeSignal =
+    sample.includes("access denied") ||
+    sample.includes("request blocked") ||
+    sample.includes("unusual traffic") ||
+    sample.includes("automated queries");
+
+  if (title === "just a moment..." || title === "just a moment") {
+    return { reason: "Cloudflare or anti-bot interstitial", title: input.title };
+  }
+  if (title.startsWith("attention required") && sample.includes("cloudflare")) {
+    return { reason: "Cloudflare attention-required page", title: input.title };
+  }
+  if (hasCloudflareSignal) {
+    return { reason: "Cloudflare challenge page", title: input.title };
+  }
+  if (hasHumanVerificationSignal) {
+    return { reason: "human verification or CAPTCHA page", title: input.title };
+  }
+  if (hasAccessChallengeSignal && sample.includes("security")) {
+    return { reason: "access challenge page", title: input.title };
+  }
+  return null;
+}
+
+function assertNotChallengePage(input: { title?: string; html?: string; markdown?: string }): void {
+  const challenge = detectChallengePage(input);
+  if (!challenge) {
+    return;
+  }
+  const title = challenge.title ? ` title "${challenge.title}"` : "";
+  throw new Error(`Challenge page detected: ${challenge.reason}${title}`);
 }
 
 function removeUnsafeBlocks(html: string): string {
@@ -504,6 +558,7 @@ async function extractStaticPage(
   const html = extractMainHtml(sanitized.html);
   const metadata = extractMetadata(rawHtml, url, html);
   const markdown = htmlToMarkdown(html);
+  assertNotChallengePage({ title: metadata.title, html: rawHtml, markdown });
   return {
     ...metadata,
     markdown,
@@ -597,6 +652,7 @@ async function extractBrowserPage(url: string, browser: BrowserQuickAction | und
   if (!markdown) {
     markdown = htmlToMarkdown(html);
   }
+  assertNotChallengePage({ title: metadata.title, html: rawHtml, markdown });
   return {
     ...metadata,
     markdown,

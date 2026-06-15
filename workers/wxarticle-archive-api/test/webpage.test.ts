@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  detectChallengePage,
   fetchAndConvertPageWithStrategy,
   htmlToMarkdown,
   parsePageOptions,
@@ -10,6 +11,16 @@ import {
 } from "../src/webpage";
 
 const fixture = readFileSync(join(process.cwd(), "test/fixtures/webpage.html"), "utf-8");
+const challengeHtml = `
+  <html>
+    <head><title>Just a moment...</title></head>
+    <body>
+      <h1>Checking if the site connection is secure</h1>
+      <p>Enable JavaScript and cookies to continue.</p>
+      <script>window.__cf_chl_opt = {};</script>
+    </body>
+  </html>
+`;
 
 describe("webpage archival", () => {
   it("sanitizes HTML with an allowlist and normalizes page assets", () => {
@@ -45,6 +56,16 @@ describe("webpage archival", () => {
     });
     expect(() => parsePageOptions({ strategy: "bad" })).toThrow("strategy must");
     expect(() => parsePageOptions({ output: "bad" })).toThrow("output must");
+  });
+
+  it("detects common challenge pages", () => {
+    const challenge = detectChallengePage({
+      title: "Just a moment...",
+      html: challengeHtml,
+      markdown: "Checking if the site connection is secure"
+    });
+
+    expect(challenge).toMatchObject({ reason: expect.stringContaining("interstitial") });
   });
 
   it("rejects unsafe page URLs before fetching", async () => {
@@ -123,6 +144,58 @@ describe("webpage archival", () => {
     expect(result.diagnostics?.browserMsUsed).toBe(200);
     expect(browser.quickAction).toHaveBeenCalledWith("content", expect.any(Object));
     expect(browser.quickAction).toHaveBeenCalledWith("markdown", expect.any(Object));
+  });
+
+  it("falls back from static challenge pages to Browser Run in auto mode", async () => {
+    const fetcher = vi.fn(async () => new Response(challengeHtml, { status: 200, headers: { "Content-Type": "text/html" } }));
+    const browser = {
+      quickAction: vi.fn(async (action: "content" | "markdown") => {
+        if (action === "markdown") {
+          return new Response(JSON.stringify({ result: "# Rendered\n\nReal content after browser rendering." }), {
+            headers: { "Content-Type": "application/json", "X-Browser-Ms-Used": "111" }
+          });
+        }
+        return new Response(fixture, {
+          headers: { "Content-Type": "text/html", "X-Browser-Ms-Used": "89" }
+        });
+      })
+    };
+
+    const result = await fetchAndConvertPageWithStrategy(
+      "https://example.com/articles/fixture",
+      browser,
+      parsePageOptions(undefined),
+      fetcher
+    );
+
+    expect(result.strategyUsed).toBe("browser-markdown");
+    expect(result.rendered).toBe(true);
+    expect(result.markdown).toContain("Real content after browser rendering");
+    expect(result.diagnostics?.attempts[0]).toMatchObject({
+      strategy: "htmlrewriter",
+      status: "failed",
+      reason: expect.stringContaining("Challenge page detected")
+    });
+  });
+
+  it("rejects Browser Run challenge pages instead of returning them as content", async () => {
+    const fetcher = vi.fn(async () => new Response("blocked", { status: 403 }));
+    const browser = {
+      quickAction: vi.fn(async (action: "content" | "markdown") => {
+        if (action === "markdown") {
+          return new Response(JSON.stringify({ result: "# Just a moment...\n\nChecking if the site connection is secure." }), {
+            headers: { "Content-Type": "application/json", "X-Browser-Ms-Used": "101" }
+          });
+        }
+        return new Response(challengeHtml, {
+          headers: { "Content-Type": "text/html", "X-Browser-Ms-Used": "99" }
+        });
+      })
+    };
+
+    await expect(
+      fetchAndConvertPageWithStrategy("https://example.com/articles/fixture", browser, parsePageOptions(undefined), fetcher)
+    ).rejects.toThrow("Challenge page detected");
   });
 
   it("returns static output when Browser Run fallback fails after useful static extraction", async () => {

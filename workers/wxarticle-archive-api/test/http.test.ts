@@ -6,6 +6,7 @@ import { handleRequest } from "../src/http";
 
 const fixture = readFileSync(join(process.cwd(), "test/fixtures/wechat-article.html"), "utf-8");
 const webpageFixture = readFileSync(join(process.cwd(), "test/fixtures/webpage.html"), "utf-8");
+const challengeFixture = "<html><head><title>Just a moment...</title></head><body>Checking if the site connection is secure</body></html>";
 
 function mockStatement() {
   return {
@@ -279,5 +280,33 @@ describe("http api", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it("returns 422 for v3 challenge pages", async () => {
+    const env = mockEnv();
+    vi.mocked(env.BROWSER.quickAction).mockImplementation(async (action) => {
+      if (action === "markdown") {
+        return new Response(JSON.stringify({ result: "# Just a moment...\n\nChecking if the site connection is secure." }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      return new Response(challengeFixture, { headers: { "Content-Type": "text/html" } });
+    });
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/pages/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({
+          url: "https://example.com/articles/fixture",
+          options: { strategy: "browser-markdown" }
+        })
+      }),
+      env
+    );
+    const body = await response.json() as { error: string };
+
+    expect(response.status).toBe(422);
+    expect(body.error).toContain("Challenge page detected");
   });
 });

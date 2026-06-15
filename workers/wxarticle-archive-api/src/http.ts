@@ -259,15 +259,16 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return notFound();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
-    const status =
-      message.startsWith("Request body") ||
-      message.includes("mode must") ||
-      message.includes("renderStrategy") ||
-      message.includes("strategy must") ||
-      message.includes("output must") ||
-      message.includes("url") ||
-      message.includes("Only public") ||
-      message.includes("Private, local")
+    const status = message.includes("Challenge page detected")
+      ? 422
+      : message.startsWith("Request body") ||
+          message.includes("mode must") ||
+          message.includes("renderStrategy") ||
+          message.includes("strategy must") ||
+          message.includes("output must") ||
+          message.includes("url") ||
+          message.includes("Only public") ||
+          message.includes("Private, local")
         ? 400
         : 500;
     console.error(JSON.stringify({ message: "request failed", path: url.pathname, error: message }));
