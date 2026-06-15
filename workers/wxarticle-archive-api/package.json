@@ -1,5 +1,5 @@
 {
-  "name": "wxarticle-archive-worker",
+  "name": "web-archive-worker",
   "version": "1.0.0",
   "private": true,
   "type": "module",

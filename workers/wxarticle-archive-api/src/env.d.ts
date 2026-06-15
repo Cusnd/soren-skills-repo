@@ -5,5 +5,6 @@ interface Env {
   RESULTS: R2Bucket;
   ARTICLE_QUEUE: Queue<import("./types").QueueMessageBody>;
   BROWSER: import("./types").BrowserQuickAction;
+  WEB_ARCHIVE_API_KEY?: string;
   WXARTICLE_API_KEY: string;
 }

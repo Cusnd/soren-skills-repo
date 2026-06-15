@@ -30,6 +30,11 @@ function normalizeArticleTitle(value: string): string {
   return value.replace(/\s+-\s+微信公众平台\s*$/u, "").trim();
 }
 
+function isWeChatImageHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower.endsWith("mmbiz.qpic.cn") || lower.endsWith("mmbiz.qlogo.cn") || lower.endsWith("mmbiz.qpic.com");
+}
+
 function attrsFromTag(tag: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   for (const match of tag.matchAll(ATTR_RE)) {
@@ -44,10 +49,14 @@ function normalizeUrl(raw: string | undefined, baseUrl: string): string | null {
     return null;
   }
   try {
-    if (trimmed.startsWith("//")) {
-      return `https:${trimmed}`;
+    const parsed = new URL(trimmed.startsWith("//") ? `https:${trimmed}` : trimmed, baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
     }
-    return new URL(trimmed, baseUrl).toString();
+    if (parsed.protocol === "http:" && isWeChatImageHost(parsed.hostname)) {
+      parsed.protocol = "https:";
+    }
+    return parsed.toString();
   } catch {
     return null;
   }
@@ -195,6 +204,15 @@ function extractWindowString(html: string, property: string): string {
   return readQuotedJsString(html, match.index + match[0].length - 1).trim();
 }
 
+function extractAssignedString(html: string, property: string): string {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`(?:\\b(?:var|let|const)\\s+${escaped}|\\bwindow\\.${escaped})\\s*=\\s*(['"])`, "u").exec(html);
+  if (!match || match.index === undefined) {
+    return "";
+  }
+  return readQuotedJsString(html, match.index + match[0].length - 1).trim();
+}
+
 function extractArticleContent(html: string): string {
   return findElementById(html, "js_content") || extractJsPropertyString(html, "content_noencode") || extractJsPropertyString(html, "content");
 }
@@ -220,6 +238,13 @@ function convertContentToMarkdown(html: string, baseUrl: string): { markdown: st
     images.push(src);
     const alt = cleanText(attrs.alt);
     return `\n\n![${alt}](${src})\n\n`;
+  });
+
+  text = text.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/giu, (tag, inner: string) => {
+    const attrs = attrsFromTag(tag);
+    const href = normalizeUrl(attrs.href, baseUrl);
+    const label = cleanText(inner);
+    return href ? `[${label || href}](${href})` : label;
   });
 
   text = text
@@ -290,7 +315,13 @@ export async function readBoundedText(response: Response, maxBytes = MAX_HTML_BY
 export function isAllowedWeChatArticleUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "mp.weixin.qq.com" && (url.pathname === "/s" || url.pathname.startsWith("/s/"));
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      url.hostname === "mp.weixin.qq.com" &&
+      (url.pathname === "/s" || url.pathname.startsWith("/s/"))
+    );
   } catch {
     return false;
   }
@@ -306,14 +337,22 @@ export function convertHtmlToArticle(html: string, url: string, fetchedAt = new 
     extractTextById(html, "activity-name") ||
     extractMeta(html, "og:title") ||
     extractWindowString(html, "msg_title") ||
+    extractAssignedString(html, "msg_title") ||
     extractWindowString(html, "title") ||
+    extractAssignedString(html, "title") ||
     cleanText((/<title\b[^>]*>([\s\S]*?)<\/title>/iu.exec(html) ?? [])[1]);
   const title = normalizeArticleTitle(rawTitle) || "Untitled WeChat Article";
-  const author = extractTextById(html, "js_name") || extractMeta(html, "article:author") || extractJsPropertyString(html, "author");
+  const author =
+    extractTextById(html, "js_name") ||
+    extractMeta(html, "article:author") ||
+    extractJsPropertyString(html, "author") ||
+    extractAssignedString(html, "nickname") ||
+    extractAssignedString(html, "author");
   const publishedAt =
     extractTextById(html, "publish_time") ||
     extractMeta(html, "article:published_time") ||
-    extractJsPropertyString(html, "create_time");
+    extractJsPropertyString(html, "create_time") ||
+    extractAssignedString(html, "publish_time");
   const converted = convertContentToMarkdown(content, url);
   const metadata = [
     `# ${title}`,
@@ -342,8 +381,10 @@ export async function fetchAndConvertArticle(url: string, fetcher: FetchLike = f
 
   const response = await fetcher(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; wxarticle-archive/1.0)",
-      "Accept": "text/html,application/xhtml+xml"
+      "User-Agent": "Mozilla/5.0 (compatible; web-archive-crawler/1.0; wechat-article/1.0)",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      "Referer": "https://mp.weixin.qq.com/"
     }
   });
   if (!response.ok) {

@@ -18,7 +18,7 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 
 | Skill | Folder | Purpose |
 | --- | --- | --- |
-| `wxarticle-archive` | `skills/wxarticle-archive/` | Archives user-provided public WeChat article URLs into Markdown and supports public webpage screenshots through the Worker API. |
+| `wxarticle-archive` | `skills/wxarticle-archive/` | Archives public HTTPS webpages into Markdown, captures screenshots, and keeps a specialized legacy WeChat article mode. |
 
 ### MCP Servers
 
@@ -30,7 +30,7 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 
 | Runtime project | Folder | Used by |
 | --- | --- | --- |
-| `wxarticle-archive-api` | `workers/wxarticle-archive-api/` | Cloudflare Worker API for `wxarticle-archive`, including WeChat archival, screenshots, and generic public webpage archival. |
+| `web-archive-api` | `workers/wxarticle-archive-api/` | Cloudflare Worker API for generic webpage crawling, screenshots, and legacy WeChat archival. |
 
 ### Templates
 

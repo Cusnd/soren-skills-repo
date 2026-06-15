@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive public WeChat article URLs through a wxarticle-archive Worker API."""
+"""Archive public webpages through a Web Archive Worker API."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-DEFAULT_OUTPUT_DIR = "wxarticle_archive"
+DEFAULT_OUTPUT_DIR = "web_archive"
 TERMINAL_STATUSES = {"succeeded", "failed", "partial_failed"}
 IMAGE_PATTERN = re.compile(r"https?://[^\s)\"']+")
 INVALID_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
@@ -33,6 +33,8 @@ API_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
+DEFAULT_API_BASE = os.environ.get("WEB_ARCHIVE_API_BASE") or os.environ.get("WXARTICLE_API_BASE")
+DEFAULT_API_KEY = os.environ.get("WEB_ARCHIVE_API_KEY") or os.environ.get("WXARTICLE_API_KEY")
 
 
 class ApiError(RuntimeError):
@@ -41,17 +43,19 @@ class ApiError(RuntimeError):
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Archive public WeChat article URLs as local Markdown files."
+        description="Archive public webpages as local Markdown files."
     )
-    parser.add_argument("urls", nargs="*", help="One or more mp.weixin.qq.com article URLs")
+    parser.add_argument("urls", nargs="*", help="One or more public HTTPS URLs")
     parser.add_argument("--input", help="Text file containing one URL per line")
     parser.add_argument("--output", default=DEFAULT_OUTPUT_DIR, help="Output directory")
-    parser.add_argument("--api-base", default=os.environ.get("WXARTICLE_API_BASE"))
-    parser.add_argument("--api-key", default=os.environ.get("WXARTICLE_API_KEY"))
+    parser.add_argument("--api-base", default=DEFAULT_API_BASE)
+    parser.add_argument("--api-key", default=DEFAULT_API_KEY)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--max-attempts", type=int, default=4)
     parser.add_argument("--image-workers", type=int, default=8)
+    parser.add_argument("--kind", choices=("auto", "webpage", "wechat"), default="auto", help="Archive route for inline mode")
+    parser.add_argument("--page-strategy", choices=("auto", "browser-markdown", "htmlrewriter", "rehype"), default="auto")
     parser.add_argument("--mode", choices=("inline", "md-only", "full"), default="inline")
     parser.add_argument("--render-strategy", choices=("never", "fallback", "always"), default="fallback")
     parser.add_argument("--cloud-images", action="store_true", help="Keep cloud image links in full mode instead of localizing them")
@@ -76,6 +80,23 @@ def read_urls(input_path: str | None, inline_urls: list[str]) -> list[str]:
     urls.extend(u.strip() for u in inline_urls if u.strip())
     deduped = list(dict.fromkeys(urls))
     return deduped
+
+
+def is_wechat_article_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and not parsed.username
+        and not parsed.password
+        and parsed.netloc == "mp.weixin.qq.com"
+        and (parsed.path == "/s" or parsed.path.startswith("/s/"))
+    )
+
+
+def resolve_source_kind(url: str, requested: str) -> str:
+    if requested != "auto":
+        return requested
+    return "wechat" if is_wechat_article_url(url) else "webpage"
 
 
 def safe_filename(name: str, fallback: str = "article") -> str:
@@ -209,6 +230,25 @@ def archive_inline(api_base: str, api_key: str, url: str, render_strategy: str) 
     )
 
 
+def archive_page_inline(api_base: str, api_key: str, url: str, render_strategy: str, page_strategy: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        api_base,
+        "/v3/crawl/inline",
+        api_key,
+        {
+            "url": url,
+            "options": {
+                "strategy": page_strategy,
+                "output": "markdown",
+                "renderStrategy": render_strategy,
+                "includeDiagnostics": True,
+            },
+        },
+        timeout=180,
+    )
+
+
 def submit_job(api_base: str, api_key: str, urls: list[str], max_attempts: int, mode: str, render_strategy: str) -> str:
     data = request_json(
         "POST",
@@ -337,7 +377,7 @@ def save_result(
     download_images: bool,
     keep_cloud_images: bool,
 ) -> Path:
-    title = str(result.get("title") or "article")
+    title = str(result.get("title") or result.get("source") or "archive")
     url = str(result.get("url") or "")
     markdown = str(result.get("markdown") or "")
     raw_images = result.get("images") or []
@@ -432,10 +472,10 @@ def capture_screenshot_stored(api_base: str, api_key: str, url: str, options: di
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if not args.api_base:
-        print("ERROR: missing API base. Set WXARTICLE_API_BASE or pass --api-base.", file=sys.stderr)
+        print("ERROR: missing API base. Set WEB_ARCHIVE_API_BASE or WXARTICLE_API_BASE, or pass --api-base.", file=sys.stderr)
         return 2
     if not args.api_key:
-        print("ERROR: missing API key. Set WXARTICLE_API_KEY or pass --api-key.", file=sys.stderr)
+        print("ERROR: missing API key. Set WEB_ARCHIVE_API_KEY or WXARTICLE_API_KEY, or pass --api-key.", file=sys.stderr)
         return 2
 
     output_dir = Path(args.output).expanduser().resolve()
@@ -466,6 +506,10 @@ def main(argv: list[str]) -> int:
         print("ERROR: no URLs provided. Pass URLs or use --input urls.txt.", file=sys.stderr)
         return 2
 
+    if args.mode != "inline" and any(not is_wechat_article_url(url) for url in urls):
+        print("ERROR: md-only and full modes currently support WeChat article URLs only; use --mode inline for generic webpages.", file=sys.stderr)
+        return 2
+
     saved: list[Path] = []
     failures: list[tuple[str, str]] = []
 
@@ -473,7 +517,11 @@ def main(argv: list[str]) -> int:
         print(f"[1/3] Archiving {len(urls)} URL(s) inline via {args.api_base.rstrip('/')}")
         for url in urls:
             try:
-                result = archive_inline(args.api_base, args.api_key, url, args.render_strategy)
+                source_kind = resolve_source_kind(url, args.kind)
+                if source_kind == "wechat":
+                    result = archive_inline(args.api_base, args.api_key, url, args.render_strategy)
+                else:
+                    result = archive_page_inline(args.api_base, args.api_key, url, args.render_strategy, args.page_strategy)
                 print(f"[2/3] Saving {result.get('title') or url}")
                 path = save_result(
                     result,
@@ -514,7 +562,7 @@ def main(argv: list[str]) -> int:
         failures.extend(collect_failures(job))
         print("[5/5] Summary")
 
-    print(f"Saved {len(saved)} article(s) to {output_dir}")
+    print(f"Saved {len(saved)} item(s) to {output_dir}")
     for url, reason in failures:
         print(f"FAILED:{url} | {reason}")
     return 0 if saved or not failures else 1

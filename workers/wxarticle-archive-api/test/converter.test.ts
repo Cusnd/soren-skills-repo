@@ -11,6 +11,7 @@ describe("converter", () => {
     expect(isAllowedWeChatArticleUrl("https://mp.weixin.qq.com/s/example")).toBe(true);
     expect(isAllowedWeChatArticleUrl("https://mp.weixin.qq.com/s?__biz=abc")).toBe(true);
     expect(isAllowedWeChatArticleUrl("http://mp.weixin.qq.com/s/example")).toBe(false);
+    expect(isAllowedWeChatArticleUrl("https://user:pass@mp.weixin.qq.com/s/example")).toBe(false);
     expect(isAllowedWeChatArticleUrl("https://example.com/s/example")).toBe(false);
   });
 
@@ -44,7 +45,23 @@ describe("converter", () => {
     expect(article.author).toBe("Inline Author");
     expect(article.publishedAt).toBe("2026-04-28 10:45");
     expect(article.markdown).toContain("Hello");
-    expect(article.markdown).toContain("link");
+    expect(article.markdown).toContain("[link](https://example.com/)");
+  });
+
+  it("preserves article links and normalizes WeChat image CDN URLs", () => {
+    const html = `
+      <html><body>
+        <h1 id="activity-name">Links</h1>
+        <div id="js_content">
+          <p>Read <a href="/s/next">next</a>.</p>
+          <img data-src="http://mmbiz.qpic.cn/demo/640?wx_fmt=jpeg" />
+        </div>
+      </body></html>
+    `;
+    const article = convertHtmlToArticle(html, "https://mp.weixin.qq.com/s/example", "2026-06-13T00:00:00.000Z");
+
+    expect(article.markdown).toContain("[next](https://mp.weixin.qq.com/s/next)");
+    expect(article.images).toEqual(["https://mmbiz.qpic.cn/demo/640?wx_fmt=jpeg"]);
   });
 
   it("does not call Browser Run when static fetch is useful", async () => {

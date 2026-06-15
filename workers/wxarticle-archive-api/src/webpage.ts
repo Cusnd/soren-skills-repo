@@ -532,7 +532,7 @@ function formatMarkdown(metadata: Pick<PageExtraction, "title">, url: string, ma
 async function fetchStaticHtml(url: string, fetcher: FetchLike): Promise<string> {
   const response = await fetcher(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; wxarticle-archive/1.0; webpage-archive/1.0)",
+      "User-Agent": "Mozilla/5.0 (compatible; web-archive-crawler/1.0)",
       "Accept": "text/html,application/xhtml+xml"
     }
   });

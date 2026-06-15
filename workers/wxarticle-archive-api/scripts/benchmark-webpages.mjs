@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 const strategies = ["auto", "browser-markdown", "htmlrewriter", "rehype"];
-const apiBase = process.env.WXARTICLE_API_BASE;
-const apiKey = process.env.WXARTICLE_API_KEY;
+const apiBase = process.env.WEB_ARCHIVE_API_BASE || process.env.WXARTICLE_API_BASE;
+const apiKey = process.env.WEB_ARCHIVE_API_KEY || process.env.WXARTICLE_API_KEY;
 
 if (!apiBase || !apiKey) {
-  console.error("Set WXARTICLE_API_BASE and WXARTICLE_API_KEY to run the remote webpage benchmark.");
+  console.error("Set WEB_ARCHIVE_API_BASE and WEB_ARCHIVE_API_KEY (or legacy WXARTICLE_API_BASE/WXARTICLE_API_KEY) to run the remote webpage benchmark.");
   process.exit(2);
 }
 
@@ -22,7 +22,7 @@ if (!Array.isArray(urls) || urls.some((url) => typeof url !== "string")) {
 
 async function archive(url, strategy) {
   const started = performance.now();
-  const response = await fetch(`${apiBase.replace(/\/+$/u, "")}/v3/pages/inline`, {
+  const response = await fetch(`${apiBase.replace(/\/+$/u, "")}/v3/crawl/inline`, {
     method: "POST",
     headers: {
       "Accept": "application/json",

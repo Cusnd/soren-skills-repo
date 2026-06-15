@@ -1,11 +1,11 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "wxarticle-archive-api",
+  "name": "web-archive-api",
   "main": "src/index.ts",
-  "compatibility_date": "2026-06-13",
+  "compatibility_date": "2026-06-15",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  // "routes": [{ "pattern": "wxarticle-api.example.com", "custom_domain": true }],
+  // "routes": [{ "pattern": "web-archive-api.example.com", "custom_domain": true }],
 
   "observability": {
     "enabled": true,
@@ -15,7 +15,7 @@
   },
 
   "secrets": {
-    "required": ["WXARTICLE_API_KEY"]
+    "required": ["WEB_ARCHIVE_API_KEY"]
   },
 
   "browser": {
@@ -25,7 +25,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "wxarticle_archive",
+      "database_name": "web_archive",
       "database_id": "replace-with-d1-database-id",
       "migrations_dir": "migrations"
     }
@@ -34,7 +34,7 @@
   "r2_buckets": [
     {
       "binding": "RESULTS",
-      "bucket_name": "wxarticle-archive-results"
+      "bucket_name": "web-archive-results"
     }
   ],
 
@@ -42,12 +42,12 @@
     "producers": [
       {
         "binding": "ARTICLE_QUEUE",
-        "queue": "wxarticle-archive-jobs"
+        "queue": "web-archive-jobs"
       }
     ],
     "consumers": [
       {
-        "queue": "wxarticle-archive-jobs",
+        "queue": "web-archive-jobs",
         "max_batch_size": 5,
         "max_batch_timeout": 30
       }

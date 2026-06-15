@@ -47,6 +47,14 @@ function notFound(): Response {
   return json({ error: "Not found" }, { status: 404 });
 }
 
+function configuredApiKey(env: Env): string {
+  const key = env.WEB_ARCHIVE_API_KEY || env.WXARTICLE_API_KEY;
+  if (!key) {
+    throw new Error("API key binding is not configured");
+  }
+  return key;
+}
+
 async function readJsonBody(request: Request): Promise<CreateJobBody> {
   const length = request.headers.get("Content-Length");
   if (length && Number(length) > MAX_REQUEST_BYTES) {
@@ -140,7 +148,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
 
   try {
-    const authenticated = await verifyApiKey(request, env.WXARTICLE_API_KEY);
+    const authenticated = await verifyApiKey(request, configuredApiKey(env));
     if (!authenticated) {
       return json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -202,7 +210,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
     }
 
-    if (request.method === "POST" && url.pathname === "/v3/pages/inline") {
+    if (request.method === "POST" && (url.pathname === "/v3/pages/inline" || url.pathname === "/v3/crawl/inline")) {
       const body = await readJsonBody(request);
       const page = await fetchInlinePage(body, env.BROWSER);
       return json(page);

@@ -269,6 +269,28 @@ describe("http api", () => {
     expect(env.BROWSER.quickAction).not.toHaveBeenCalled();
   });
 
+  it("accepts the generic v3 crawl alias and WEB_ARCHIVE_API_KEY", async () => {
+    const env = { ...mockEnv(), WEB_ARCHIVE_API_KEY: "web-secret" } as Env;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(webpageFixture, { status: 200, headers: { "Content-Type": "text/html" } }))
+    );
+
+    const response = await handleRequest(
+      new Request("https://api.test/v3/crawl/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "web-secret" },
+        body: JSON.stringify({ url: "https://example.com/articles/fixture" })
+      }),
+      env
+    );
+    const body = await response.json() as { title: string; strategyUsed: string };
+
+    expect(response.status).toBe(200);
+    expect(body.title).toBe("Fixture Web Page");
+    expect(body.strategyUsed).toBe("htmlrewriter");
+  });
+
   it("rejects local v3 page URLs", async () => {
     const response = await handleRequest(
       new Request("https://api.test/v3/pages/inline", {
