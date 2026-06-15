@@ -29,6 +29,7 @@ TERMINAL_STATUSES = {"succeeded", "failed", "partial_failed"}
 IMAGE_PATTERN = re.compile(r"https?://[^\s)\"']+")
 INVALID_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".avif"}
+IMAGE_DOWNLOAD_ATTEMPTS = 3
 API_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -310,20 +311,23 @@ def download_image(
         url,
         headers=headers,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            content_type = resp.headers.get("Content-Type")
-            local_name = hashed_image_name(url, content_type)
-            dest = images_dir / local_name
-            data = resp.read()
-        if not data:
-            return url, None
-        if not dest.exists():
-            with open(dest, "wb") as fh:
-                fh.write(data)
-        return replace_url, local_name
-    except Exception:
-        return replace_url, None
+    for attempt in range(1, IMAGE_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                content_type = resp.headers.get("Content-Type")
+                local_name = hashed_image_name(url, content_type)
+                dest = images_dir / local_name
+                data = resp.read()
+            if not data:
+                return url, None
+            if not dest.exists():
+                with open(dest, "wb") as fh:
+                    fh.write(data)
+            return replace_url, local_name
+        except Exception:
+            if attempt < IMAGE_DOWNLOAD_ATTEMPTS:
+                time.sleep(0.25 * attempt)
+    return replace_url, None
 
 
 def cloud_image_map(result: dict[str, Any], api_base: str) -> dict[str, str]:
