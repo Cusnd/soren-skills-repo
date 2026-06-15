@@ -12,6 +12,33 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 - `docs/` - Repository conventions, authoring notes, and publishing guidance.
 - `scripts/validate-repo.mjs` - Lightweight structural validation for skills and MCP server folders.
 
+## Current Inventory
+
+### Skills
+
+| Skill | Folder | Purpose |
+| --- | --- | --- |
+| `wxarticle-archive` | `skills/wxarticle-archive/` | Archives user-provided public WeChat article URLs into Markdown and supports public webpage screenshots through the Worker API. |
+
+### MCP Servers
+
+| MCP server | Folder | Status |
+| --- | --- | --- |
+| None yet | `mcp/servers/` | Reserved for future production MCP server projects. |
+
+### Supporting Runtimes
+
+| Runtime project | Folder | Used by |
+| --- | --- | --- |
+| `wxarticle-archive-api` | `workers/wxarticle-archive-api/` | Cloudflare Worker API for `wxarticle-archive`, including WeChat archival, screenshots, and generic public webpage archival. |
+
+### Templates
+
+| Template | Folder | Purpose |
+| --- | --- | --- |
+| Skill template | `templates/skill/` | Starter structure for a new Codex skill. |
+| TypeScript MCP server template | `templates/mcp-server-typescript/` | Starter TypeScript stdio MCP server. |
+
 ## Quick Start
 
 Validate the repository:
