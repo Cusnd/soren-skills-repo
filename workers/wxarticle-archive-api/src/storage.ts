@@ -9,7 +9,10 @@ import {
   type JobResponse,
   type JobRow,
   type JobStatus,
-  type QueueMessageBody
+  type QueueMessageBody,
+  type RenderStrategy,
+  type ScreenshotOptions,
+  type ScreenshotResult
 } from "./types";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -36,6 +39,10 @@ function deriveJobStatus(total: number, queued: number, processing: number, succ
 
 export function resultKey(jobId: string, itemId: string): string {
   return `jobs/${jobId}/${itemId}/article.json`;
+}
+
+export function screenshotKey(screenshotId: string): string {
+  return `screenshots/${screenshotId}.png`;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -83,7 +90,8 @@ export async function createJob(
   env: Env,
   urls: string[],
   maxAttempts: number,
-  mode: AsyncStorageMode = "md-only"
+  mode: AsyncStorageMode = "md-only",
+  renderStrategy: RenderStrategy = "fallback"
 ): Promise<JobResponse> {
   const createdAt = nowIso();
   const jobId = crypto.randomUUID();
@@ -114,7 +122,8 @@ export async function createJob(
         itemId: item.itemId,
         url: item.url,
         maxAttempts: item.maxAttempts,
-        mode
+        mode,
+        renderStrategy
       } satisfies QueueMessageBody
     }))
   );
@@ -271,6 +280,60 @@ export async function getAsset(env: Env, jobId: string, itemId: string, imageNam
     return null;
   }
   return env.RESULTS.get(`jobs/${jobId}/${itemId}/images/${imageName}`);
+}
+
+export async function storeScreenshot(
+  env: Env,
+  screenshotId: string,
+  url: string,
+  image: ArrayBuffer,
+  options: ScreenshotOptions
+): Promise<ScreenshotResult> {
+  const createdAt = nowIso();
+  const key = screenshotKey(screenshotId);
+  const contentType = "image/png";
+  await env.RESULTS.put(key, image, {
+    httpMetadata: {
+      contentType
+    }
+  });
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO screenshots (screenshot_id, url, r2_key, content_type, width, height, full_page, created_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+  )
+    .bind(screenshotId, url, key, contentType, options.width, options.height, options.fullPage ? 1 : 0, createdAt)
+    .run();
+  return {
+    screenshotId,
+    url,
+    assetUrl: `/v2/screenshots/${screenshotId}`,
+    key,
+    contentType,
+    width: options.width,
+    height: options.height,
+    fullPage: options.fullPage,
+    createdAt
+  };
+}
+
+export async function recordScreenshotFailure(
+  env: Env,
+  screenshotId: string,
+  url: string,
+  options: ScreenshotOptions,
+  error: string
+): Promise<void> {
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO screenshots (screenshot_id, url, r2_key, content_type, width, height, full_page, created_at, error) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?)"
+  )
+    .bind(screenshotId, url, options.width, options.height, options.fullPage ? 1 : 0, nowIso(), error)
+    .run();
+}
+
+export async function getScreenshot(env: Env, screenshotId: string): Promise<R2ObjectBody | null> {
+  if (!screenshotId || screenshotId.includes("/") || screenshotId.includes("\\") || screenshotId.includes("..")) {
+    return null;
+  }
+  return env.RESULTS.get(screenshotKey(screenshotId));
 }
 
 export async function markItemFailed(env: Env, item: ItemRow, error: string): Promise<void> {

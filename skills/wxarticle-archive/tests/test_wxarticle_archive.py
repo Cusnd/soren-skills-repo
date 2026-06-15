@@ -10,6 +10,7 @@ from scripts.wxarticle_archive import (
     read_urls,
     safe_filename,
     save_result,
+    screenshot_path,
 )
 
 
@@ -83,6 +84,13 @@ class WxArticleArchiveClientTests(unittest.TestCase):
                 "https://wxarticle-api.example.com/v2/assets/job/item/hash.jpg",
                 path.read_text(encoding="utf-8"),
             )
+
+    def test_screenshot_path_uses_hash_and_png_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = screenshot_path(Path(tmp), "https://example.com/docs/page?x=1")
+            self.assertEqual(path.parent.name, "screenshots")
+            self.assertTrue(path.name.startswith("example.com_docs_page-"))
+            self.assertTrue(path.name.endswith(".png"))
 
 
 if __name__ == "__main__":

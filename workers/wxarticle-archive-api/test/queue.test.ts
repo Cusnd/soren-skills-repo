@@ -23,6 +23,9 @@ function mockEnv(item: ItemRow): Env {
     ARTICLE_QUEUE: {},
     RESULTS: {
       put
+    },
+    BROWSER: {
+      quickAction: vi.fn()
     }
   } as unknown as Env;
 }
@@ -95,6 +98,42 @@ describe("queue", () => {
     expect(env.RESULTS.put).toHaveBeenCalledTimes(2);
     expect(vi.mocked(env.RESULTS.put).mock.calls[0][0]).toContain("/images/");
     expect(vi.mocked(env.RESULTS.put).mock.calls[1][0]).toContain("/article.json");
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("uses Browser Run for queued jobs when render strategy is always", async () => {
+    const item: ItemRow = {
+      job_id: "job-3",
+      item_id: "item-3",
+      url: "https://mp.weixin.qq.com/s/example",
+      status: "queued",
+      attempts: 0,
+      max_attempts: 4,
+      error: null,
+      result_key: null,
+      result_kind: null,
+      created_at: "2026-06-13T00:00:00.000Z",
+      updated_at: "2026-06-13T00:00:00.000Z"
+    };
+    const env = mockEnv(item);
+    vi.mocked(env.BROWSER.quickAction).mockResolvedValueOnce(
+      new Response(fixture, { status: 200, headers: { "Content-Type": "text/html" } })
+    );
+    const body: QueueMessageBody = {
+      jobId: item.job_id,
+      itemId: item.item_id,
+      url: item.url,
+      maxAttempts: 4,
+      renderStrategy: "always"
+    };
+    const retry = vi.fn();
+    const fetcher = vi.fn();
+
+    await processQueueMessage(env, body, retry, fetcher);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(env.BROWSER.quickAction).toHaveBeenCalledWith("content", expect.any(Object));
+    expect(env.RESULTS.put).toHaveBeenCalledTimes(1);
     expect(retry).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,14 @@ function mockStatement() {
 }
 
 function mockEnv(): Env {
+  const browser = {
+    quickAction: vi.fn(async () =>
+      new Response(JSON.stringify({ success: true, result: fixture }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    )
+  };
   return {
     WXARTICLE_API_KEY: "secret",
     DB: {
@@ -27,8 +35,10 @@ function mockEnv(): Env {
       sendBatch: vi.fn(async () => undefined)
     },
     RESULTS: {
-      get: vi.fn(async () => null)
-    }
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => undefined)
+    },
+    BROWSER: browser
   } as unknown as Env;
 }
 
@@ -95,6 +105,25 @@ describe("http api", () => {
     expect(body.markdown).toContain("Hello **world**.");
     expect(env.DB.batch).not.toHaveBeenCalled();
     expect(env.ARTICLE_QUEUE.sendBatch).not.toHaveBeenCalled();
+    expect(env.BROWSER.quickAction).not.toHaveBeenCalled();
+  });
+
+  it("returns rendered v2 archives through Browser Run", async () => {
+    const env = mockEnv();
+    const response = await handleRequest(
+      new Request("https://api.test/v2/archive/rendered", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://mp.weixin.qq.com/s/example" })
+      }),
+      env
+    );
+    const body = await response.json() as { rendered: boolean; title: string };
+
+    expect(response.status).toBe(200);
+    expect(body.rendered).toBe(true);
+    expect(body.title).toBe("Fixture Title");
+    expect(env.BROWSER.quickAction).toHaveBeenCalledWith("content", expect.any(Object));
   });
 
   it("creates v2 full jobs and queues the selected mode", async () => {
@@ -111,5 +140,94 @@ describe("http api", () => {
 
     expect(response.status).toBe(202);
     expect(batch[0].body.mode).toBe("full");
+  });
+
+  it("passes render strategy to v2 queued jobs", async () => {
+    const env = mockEnv();
+    const response = await handleRequest(
+      new Request("https://api.test/v2/jobs", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({
+          urls: ["https://mp.weixin.qq.com/s/example"],
+          mode: "md-only",
+          options: { renderStrategy: "always" }
+        })
+      }),
+      env
+    );
+    const batch = vi.mocked(env.ARTICLE_QUEUE.sendBatch).mock.calls[0][0] as Array<{
+      body: { renderStrategy: string };
+    }>;
+
+    expect(response.status).toBe(202);
+    expect(batch[0].body.renderStrategy).toBe("always");
+  });
+
+  it("returns inline screenshots without writing R2", async () => {
+    const env = mockEnv();
+    vi.mocked(env.BROWSER.quickAction).mockResolvedValueOnce(
+      new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "image/png" } })
+    );
+
+    const response = await handleRequest(
+      new Request("https://api.test/v2/screenshots/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://example.com/", options: { width: 1000, height: 700 } })
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(env.BROWSER.quickAction).toHaveBeenCalledWith(
+      "screenshot",
+      expect.objectContaining({
+        url: "https://example.com/",
+        viewport: { width: 1000, height: 700 }
+      })
+    );
+    expect(env.RESULTS.put).not.toHaveBeenCalled();
+  });
+
+  it("stores screenshots in R2 and D1", async () => {
+    const env = mockEnv();
+    vi.mocked(env.BROWSER.quickAction).mockResolvedValueOnce(
+      new Response(JSON.stringify({ result: { screenshot: "AQID" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    const response = await handleRequest(
+      new Request("https://api.test/v2/screenshots", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://example.com/" })
+      }),
+      env
+    );
+    const body = await response.json() as { screenshotId: string; assetUrl: string; key: string };
+
+    expect(response.status).toBe(201);
+    expect(body.screenshotId).toBeTruthy();
+    expect(body.assetUrl).toContain("/v2/screenshots/");
+    expect(body.key).toContain("screenshots/");
+    expect(env.RESULTS.put).toHaveBeenCalledTimes(1);
+    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT OR REPLACE INTO screenshots"));
+  });
+
+  it("rejects local screenshot URLs", async () => {
+    const response = await handleRequest(
+      new Request("https://api.test/v2/screenshots/inline", {
+        method: "POST",
+        headers: { "X-API-Key": "secret" },
+        body: JSON.stringify({ url: "https://localhost/admin" })
+      }),
+      mockEnv()
+    );
+
+    expect(response.status).toBe(400);
   });
 });

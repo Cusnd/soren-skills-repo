@@ -1,4 +1,10 @@
-import { MAX_HTML_BYTES, type ArticleResult } from "./types";
+import {
+  MAX_HTML_BYTES,
+  MIN_USEFUL_MARKDOWN_CHARS,
+  type ArticleResult,
+  type BrowserQuickAction,
+  type RenderStrategy
+} from "./types";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -233,6 +239,24 @@ function convertContentToMarkdown(html: string, baseUrl: string): { markdown: st
   return { markdown, images: Array.from(new Set(images)) };
 }
 
+function markdownBodyChars(markdown: string): number {
+  const body = markdown
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      return trimmed && !trimmed.startsWith("# ") && !trimmed.startsWith(">");
+    })
+    .join("\n")
+    .replace(/!\[[^\]]*\]\([^)]+\)/gu, "")
+    .replace(/[*_`#[\]()>\-]/gu, "")
+    .replace(/\s+/gu, "");
+  return body.length;
+}
+
+function hasUsefulMarkdownBody(article: ArticleResult): boolean {
+  return markdownBodyChars(article.markdown) >= MIN_USEFUL_MARKDOWN_CHARS || article.images.length > 0;
+}
+
 async function readBoundedText(response: Response, maxBytes = MAX_HTML_BYTES): Promise<string> {
   const length = response.headers.get("Content-Length");
   if (length && Number(length) > maxBytes) {
@@ -330,4 +354,86 @@ export async function fetchAndConvertArticle(url: string, fetcher: FetchLike = f
   const fetchedAt = new Date().toISOString();
   const html = await readBoundedText(response);
   return convertHtmlToArticle(html, url, fetchedAt);
+}
+
+async function quickActionText(response: Response): Promise<string> {
+  if (!response.ok) {
+    response.body?.cancel();
+    throw new Error(`Browser Run content failed with HTTP ${response.status}`);
+  }
+  const contentType = response.headers.get("Content-Type") ?? "";
+  const text = await response.text();
+  if (!contentType.includes("json")) {
+    return text;
+  }
+
+  const parsed = JSON.parse(text) as {
+    result?: string | { content?: unknown; html?: unknown };
+    content?: unknown;
+    html?: unknown;
+  };
+  const result = parsed.result;
+  const content = typeof result === "string" ? result : result?.content ?? result?.html ?? parsed.content ?? parsed.html;
+  if (typeof content !== "string") {
+    throw new Error("Browser Run content response did not include HTML content");
+  }
+  return content;
+}
+
+export async function renderAndConvertArticle(url: string, browser: BrowserQuickAction): Promise<ArticleResult> {
+  if (!isAllowedWeChatArticleUrl(url)) {
+    throw new Error("Only public https://mp.weixin.qq.com/s... article URLs are allowed");
+  }
+  if (!browser) {
+    throw new Error("Browser Run binding is not configured");
+  }
+
+  const response = await browser.quickAction("content", {
+    url,
+    gotoOptions: {
+      waitUntil: "networkidle2",
+      timeout: 30000
+    }
+  });
+  const fetchedAt = new Date().toISOString();
+  const html = await quickActionText(response);
+  const article = convertHtmlToArticle(html, url, fetchedAt);
+  article.rendered = true;
+  return article;
+}
+
+export async function fetchAndConvertArticleWithStrategy(
+  url: string,
+  browser: BrowserQuickAction | undefined,
+  strategy: RenderStrategy = "fallback",
+  fetcher: FetchLike = fetch
+): Promise<ArticleResult> {
+  if (strategy === "always") {
+    return renderAndConvertArticle(url, browser as BrowserQuickAction);
+  }
+
+  let staticArticle: ArticleResult | null = null;
+  let staticError: unknown = null;
+  try {
+    staticArticle = await fetchAndConvertArticle(url, fetcher);
+    if (strategy === "never" || hasUsefulMarkdownBody(staticArticle)) {
+      return staticArticle;
+    }
+  } catch (error) {
+    staticError = error;
+    if (strategy === "never") {
+      throw error;
+    }
+  }
+
+  try {
+    return await renderAndConvertArticle(url, browser as BrowserQuickAction);
+  } catch (renderError) {
+    if (staticArticle) {
+      return staticArticle;
+    }
+    const staticMessage = staticError instanceof Error ? staticError.message : String(staticError);
+    const renderMessage = renderError instanceof Error ? renderError.message : String(renderError);
+    throw new Error(`Static fetch failed (${staticMessage}); Browser Run fallback failed (${renderMessage})`);
+  }
 }

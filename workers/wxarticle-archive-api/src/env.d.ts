@@ -4,5 +4,6 @@ interface Env {
   DB: D1Database;
   RESULTS: R2Bucket;
   ARTICLE_QUEUE: Queue<import("./types").QueueMessageBody>;
+  BROWSER: import("./types").BrowserQuickAction;
   WXARTICLE_API_KEY: string;
 }

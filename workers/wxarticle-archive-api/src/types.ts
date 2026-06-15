@@ -2,11 +2,17 @@ export const DEFAULT_MAX_ATTEMPTS = 4;
 export const MAX_URLS_PER_JOB = 100;
 export const MAX_REQUEST_BYTES = 256 * 1024;
 export const MAX_HTML_BYTES = 8 * 1024 * 1024;
+export const MIN_USEFUL_MARKDOWN_CHARS = 80;
 
 export type ItemStatus = "queued" | "processing" | "succeeded" | "failed";
 export type JobStatus = "queued" | "processing" | "succeeded" | "failed" | "partial_failed";
 export type StorageMode = "inline" | "md-only" | "full";
 export type AsyncStorageMode = Exclude<StorageMode, "inline">;
+export type RenderStrategy = "never" | "fallback" | "always";
+
+export interface BrowserQuickAction {
+  quickAction(action: "content" | "screenshot", options: any): Promise<Response>;
+}
 
 export interface QueueMessageBody {
   jobId: string;
@@ -14,6 +20,7 @@ export interface QueueMessageBody {
   url: string;
   maxAttempts: number;
   mode?: AsyncStorageMode;
+  renderStrategy?: RenderStrategy;
 }
 
 export interface CloudImageResult {
@@ -34,6 +41,37 @@ export interface ArticleResult {
   cloudImages?: CloudImageResult[];
   imageMap?: Record<string, string>;
   sourceFetchedAt: string;
+  rendered?: boolean;
+}
+
+export interface ScreenshotOptions {
+  width: number;
+  height: number;
+  fullPage: boolean;
+}
+
+export interface ScreenshotResult {
+  screenshotId: string;
+  url: string;
+  assetUrl: string;
+  key: string;
+  contentType: string;
+  width: number;
+  height: number;
+  fullPage: boolean;
+  createdAt: string;
+}
+
+export interface ScreenshotRow {
+  screenshot_id: string;
+  url: string;
+  r2_key: string | null;
+  content_type: string | null;
+  width: number;
+  height: number;
+  full_page: number;
+  created_at: string;
+  error: string | null;
 }
 
 export interface JobRow {

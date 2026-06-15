@@ -53,8 +53,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-attempts", type=int, default=4)
     parser.add_argument("--image-workers", type=int, default=8)
     parser.add_argument("--mode", choices=("inline", "md-only", "full"), default="inline")
+    parser.add_argument("--render-strategy", choices=("never", "fallback", "always"), default="fallback")
     parser.add_argument("--cloud-images", action="store_true", help="Keep cloud image links in full mode instead of localizing them")
     parser.add_argument("--no-image-download", action="store_true", help="Save Markdown without downloading images")
+    parser.add_argument("--screenshot", help="Capture a full-page screenshot for a public HTTPS URL instead of archiving articles")
+    parser.add_argument("--screenshot-inline", action="store_true", help="Use the inline screenshot endpoint instead of storing in R2 first")
+    parser.add_argument("--screenshot-width", type=int, default=1365)
+    parser.add_argument("--screenshot-height", type=int, default=768)
+    parser.add_argument("--screenshot-no-full-page", dest="screenshot_full_page", action="store_false", default=True)
     return parser.parse_args(argv)
 
 
@@ -158,23 +164,58 @@ def request_json(
     return data
 
 
-def archive_inline(api_base: str, api_key: str, url: str) -> dict[str, Any]:
+def request_binary(
+    method: str,
+    api_base: str,
+    path: str,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 120.0,
+) -> tuple[bytes, str | None]:
+    url = api_base.rstrip("/") + path
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "Accept": "image/png,*/*",
+            "Content-Type": "application/json; charset=utf-8",
+            "X-API-Key": api_key,
+            "User-Agent": API_USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read(), resp.headers.get("Content-Type")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as err:
+            raise ApiError(f"HTTP {exc.code}: {raw}") from err
+        raise ApiError(data.get("error") or f"HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+def archive_inline(api_base: str, api_key: str, url: str, render_strategy: str) -> dict[str, Any]:
     return request_json(
         "POST",
         api_base,
         "/v2/archive/inline",
         api_key,
-        {"url": url, "options": {"downloadImages": False}},
+        {"url": url, "options": {"downloadImages": False, "renderStrategy": render_strategy}},
     )
 
 
-def submit_job(api_base: str, api_key: str, urls: list[str], max_attempts: int, mode: str) -> str:
+def submit_job(api_base: str, api_key: str, urls: list[str], max_attempts: int, mode: str, render_strategy: str) -> str:
     data = request_json(
         "POST",
         api_base,
         "/v2/jobs",
         api_key,
-        {"urls": urls, "mode": mode, "options": {"maxAttempts": max_attempts}},
+        {"urls": urls, "mode": mode, "options": {"maxAttempts": max_attempts, "renderStrategy": render_strategy}},
     )
     job_id = data.get("jobId")
     if not isinstance(job_id, str) or not job_id:
@@ -187,7 +228,7 @@ def poll_job(
     api_key: str,
     job_id: str,
     poll_interval: float,
-        timeout: float,
+    timeout: float,
 ) -> dict[str, Any]:
     started = time.monotonic()
     last_status = None
@@ -343,6 +384,51 @@ def collect_failures(job: dict[str, Any]) -> list[tuple[str, str]]:
     return failures
 
 
+def screenshot_options(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "width": args.screenshot_width,
+        "height": args.screenshot_height,
+        "fullPage": args.screenshot_full_page,
+    }
+
+
+def screenshot_path(output_dir: Path, url: str) -> Path:
+    parsed = urllib.parse.urlparse(url)
+    stem = safe_filename(f"{parsed.netloc}{parsed.path}".strip("/") or "screenshot", "screenshot")
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+    screenshots_dir = output_dir / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    return unique_path(screenshots_dir, f"{stem}-{digest}", ".png")
+
+
+def capture_screenshot_inline(api_base: str, api_key: str, url: str, options: dict[str, Any]) -> bytes:
+    image, _content_type = request_binary(
+        "POST",
+        api_base,
+        "/v2/screenshots/inline",
+        api_key,
+        {"url": url, "options": options},
+        timeout=180,
+    )
+    return image
+
+
+def capture_screenshot_stored(api_base: str, api_key: str, url: str, options: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
+    result = request_json(
+        "POST",
+        api_base,
+        "/v2/screenshots",
+        api_key,
+        {"url": url, "options": options},
+        timeout=180,
+    )
+    asset_url = result.get("assetUrl")
+    if not isinstance(asset_url, str) or not asset_url:
+        raise ApiError("screenshot response did not include assetUrl")
+    image, _content_type = request_binary("GET", api_base, asset_url, api_key, timeout=120)
+    return image, result
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if not args.api_base:
@@ -352,13 +438,33 @@ def main(argv: list[str]) -> int:
         print("ERROR: missing API key. Set WXARTICLE_API_KEY or pass --api-key.", file=sys.stderr)
         return 2
 
+    output_dir = Path(args.output).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.screenshot:
+        options = screenshot_options(args)
+        print(f"[1/2] Capturing screenshot for {args.screenshot}")
+        if args.screenshot_inline:
+            image = capture_screenshot_inline(args.api_base, args.api_key, args.screenshot, options)
+            metadata: dict[str, Any] | None = None
+        else:
+            image, metadata = capture_screenshot_stored(args.api_base, args.api_key, args.screenshot, options)
+        path = screenshot_path(output_dir, args.screenshot)
+        with open(path, "wb") as fh:
+            fh.write(image)
+        if metadata:
+            meta_path = path.with_suffix(".json")
+            with open(meta_path, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(metadata, fh, ensure_ascii=False, indent=2)
+                fh.write("\n")
+            print(f"META:{meta_path}")
+        print(f"[2/2] SAVED:{path}")
+        return 0
+
     urls = read_urls(args.input, args.urls)
     if not urls:
         print("ERROR: no URLs provided. Pass URLs or use --input urls.txt.", file=sys.stderr)
         return 2
-
-    output_dir = Path(args.output).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     saved: list[Path] = []
     failures: list[tuple[str, str]] = []
@@ -367,7 +473,7 @@ def main(argv: list[str]) -> int:
         print(f"[1/3] Archiving {len(urls)} URL(s) inline via {args.api_base.rstrip('/')}")
         for url in urls:
             try:
-                result = archive_inline(args.api_base, args.api_key, url)
+                result = archive_inline(args.api_base, args.api_key, url, args.render_strategy)
                 print(f"[2/3] Saving {result.get('title') or url}")
                 path = save_result(
                     result,
@@ -385,7 +491,7 @@ def main(argv: list[str]) -> int:
         print("[3/3] Summary")
     else:
         print(f"[1/5] Submitting {len(urls)} URL(s) to {args.api_base.rstrip()} in {args.mode} mode")
-        job_id = submit_job(args.api_base, args.api_key, urls, max(1, args.max_attempts), args.mode)
+        job_id = submit_job(args.api_base, args.api_key, urls, max(1, args.max_attempts), args.mode, args.render_strategy)
 
         print(f"[2/5] Waiting for job {job_id}")
         job = poll_job(args.api_base, args.api_key, job_id, args.poll_interval, args.timeout)

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { convertHtmlToArticle, isAllowedWeChatArticleUrl } from "../src/converter";
+import { convertHtmlToArticle, fetchAndConvertArticleWithStrategy, isAllowedWeChatArticleUrl } from "../src/converter";
 
 const fixture = readFileSync(join(process.cwd(), "test/fixtures/wechat-article.html"), "utf-8");
 
@@ -45,5 +45,77 @@ describe("converter", () => {
     expect(article.publishedAt).toBe("2026-04-28 10:45");
     expect(article.markdown).toContain("Hello");
     expect(article.markdown).toContain("link");
+  });
+
+  it("does not call Browser Run when static fetch is useful", async () => {
+    const fetcher = vi.fn(async () => new Response(fixture, { status: 200, headers: { "Content-Type": "text/html" } }));
+    const browser = { quickAction: vi.fn() };
+
+    const article = await fetchAndConvertArticleWithStrategy(
+      "https://mp.weixin.qq.com/s/example",
+      browser,
+      "fallback",
+      fetcher
+    );
+
+    expect(article.title).toBe("Fixture Title");
+    expect(browser.quickAction).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Browser Run when static fetch fails", async () => {
+    const fetcher = vi.fn(async () => new Response("blocked", { status: 403 }));
+    const browser = {
+      quickAction: vi.fn(async () =>
+        new Response(JSON.stringify({ success: true, result: fixture }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    };
+
+    const article = await fetchAndConvertArticleWithStrategy(
+      "https://mp.weixin.qq.com/s/example",
+      browser,
+      "fallback",
+      fetcher
+    );
+
+    expect(article.title).toBe("Fixture Title");
+    expect(article.rendered).toBe(true);
+    expect(browser.quickAction).toHaveBeenCalledWith("content", expect.any(Object));
+  });
+
+  it("falls back to Browser Run when static body is too short", async () => {
+    const shortHtml = `
+      <html><body>
+        <h1 id="activity-name">Short</h1>
+        <div id="js_content"><p>tiny</p></div>
+      </body></html>
+    `;
+    const fetcher = vi.fn(async () => new Response(shortHtml, { status: 200, headers: { "Content-Type": "text/html" } }));
+    const browser = {
+      quickAction: vi.fn(async () => new Response(fixture, { status: 200, headers: { "Content-Type": "text/html" } }))
+    };
+
+    const article = await fetchAndConvertArticleWithStrategy(
+      "https://mp.weixin.qq.com/s/example",
+      browser,
+      "fallback",
+      fetcher
+    );
+
+    expect(article.title).toBe("Fixture Title");
+    expect(article.rendered).toBe(true);
+    expect(browser.quickAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back when render strategy is never", async () => {
+    const fetcher = vi.fn(async () => new Response("blocked", { status: 403 }));
+    const browser = { quickAction: vi.fn() };
+
+    await expect(
+      fetchAndConvertArticleWithStrategy("https://mp.weixin.qq.com/s/example", browser, "never", fetcher)
+    ).rejects.toThrow("Article fetch failed");
+    expect(browser.quickAction).not.toHaveBeenCalled();
   });
 });

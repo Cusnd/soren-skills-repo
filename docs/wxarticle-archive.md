@@ -1,6 +1,7 @@
 # WxArticle Archive
 
 `wxarticle-archive` is a Codex skill plus Cloudflare Worker API for archiving user-provided public WeChat article URLs into Markdown.
+It supports static article fetch, Cloudflare Browser Run rendered fallback, and public HTTPS full-page screenshots.
 
 ## Repository Paths
 
@@ -18,6 +19,13 @@
 
 Cloudflare platform logs and request metadata can still exist outside application storage.
 
+## Render And Screenshot Modes
+
+- `renderStrategy: "never"` uses only static `fetch`.
+- `renderStrategy: "fallback"` is the default: static fetch first, then Browser Run only when fetch fails or the extracted body is suspiciously short.
+- `renderStrategy: "always"` forces Browser Run and is also exposed as `POST /v2/archive/rendered`.
+- Screenshot endpoints accept one public `https://` URL, reject local/private hosts, and do not send user cookies.
+
 ## Local Skill Usage
 
 Use environment variables or explicit flags:
@@ -33,12 +41,29 @@ Direct URL examples:
 ```powershell
 python .\skills\wxarticle-archive\scripts\wxarticle_archive.py "https://mp.weixin.qq.com/s/example" --output .\articles --mode md-only
 python .\skills\wxarticle-archive\scripts\wxarticle_archive.py --input .\urls.txt --output .\articles --mode full
+python .\skills\wxarticle-archive\scripts\wxarticle_archive.py "https://mp.weixin.qq.com/s/example" --render-strategy always
+python .\skills\wxarticle-archive\scripts\wxarticle_archive.py --screenshot "https://example.com/" --screenshot-inline --output .\captures
 ```
 
 Image flags:
 
 - `--no-image-download` saves Markdown only.
 - `--cloud-images` keeps authenticated cloud asset links in `full` mode instead of rewriting to local image files.
+- `--render-strategy never|fallback|always` controls static versus Browser Run article extraction.
+- `--screenshot <url>` captures one public HTTPS page instead of archiving articles.
+- `--screenshot-inline` returns screenshot bytes directly; without it, the Worker stores the PNG in R2 and the client downloads a local copy plus metadata.
+
+## Worker API v2
+
+- `POST /v2/archive/inline`
+- `POST /v2/archive/rendered`
+- `POST /v2/jobs`
+- `GET /v2/jobs/:jobId`
+- `GET /v2/jobs/:jobId/results/:itemId`
+- `GET /v2/assets/:jobId/:itemId/:imageName`
+- `POST /v2/screenshots/inline`
+- `POST /v2/screenshots`
+- `GET /v2/screenshots/:screenshotId`
 
 ## Worker Deployment
 
@@ -58,4 +83,4 @@ npx wrangler secret put WXARTICLE_API_KEY
 npm run deploy
 ```
 
-Do not commit `.dev.vars`, real `wrangler.jsonc`, generated bundles, account IDs, production database IDs, or API keys.
+The Worker uses D1, R2, Queues, and a Browser Run `BROWSER` binding. Do not commit `.dev.vars`, real `wrangler.jsonc`, generated bundles, account IDs, production database IDs, custom domains, or API keys.

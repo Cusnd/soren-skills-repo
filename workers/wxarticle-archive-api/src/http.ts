@@ -1,7 +1,23 @@
 import { verifyApiKey } from "./auth";
-import { fetchAndConvertArticle, isAllowedWeChatArticleUrl } from "./converter";
-import { createJob, getAsset, getJob, getResult, listSucceededItems } from "./storage";
-import { DEFAULT_MAX_ATTEMPTS, MAX_REQUEST_BYTES, MAX_URLS_PER_JOB, type AsyncStorageMode } from "./types";
+import { fetchAndConvertArticleWithStrategy, isAllowedWeChatArticleUrl } from "./converter";
+import { captureScreenshot, parsePublicHttpsUrl, parseScreenshotOptions, screenshotImageResponse } from "./screenshot";
+import {
+  createJob,
+  getAsset,
+  getJob,
+  getResult,
+  getScreenshot,
+  listSucceededItems,
+  recordScreenshotFailure,
+  storeScreenshot
+} from "./storage";
+import {
+  DEFAULT_MAX_ATTEMPTS,
+  MAX_REQUEST_BYTES,
+  MAX_URLS_PER_JOB,
+  type AsyncStorageMode,
+  type RenderStrategy
+} from "./types";
 
 interface CreateJobBody {
   urls?: unknown;
@@ -10,6 +26,10 @@ interface CreateJobBody {
   options?: {
     maxAttempts?: unknown;
     downloadImages?: unknown;
+    renderStrategy?: unknown;
+    width?: unknown;
+    height?: unknown;
+    fullPage?: unknown;
   };
 }
 
@@ -92,6 +112,16 @@ function parseAsyncMode(value: unknown): AsyncStorageMode {
   throw new Error("mode must be either md-only or full");
 }
 
+function parseRenderStrategy(value: unknown): RenderStrategy {
+  if (value === undefined || value === null) {
+    return "fallback";
+  }
+  if (value === "never" || value === "fallback" || value === "always") {
+    return value;
+  }
+  throw new Error("renderStrategy must be never, fallback, or always");
+}
+
 function assetResponse(object: R2ObjectBody): Response {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
@@ -122,7 +152,15 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (request.method === "POST" && url.pathname === "/v2/archive/inline") {
       const body = await readJsonBody(request);
       const articleUrl = parseUrl(body.url);
-      const article = await fetchAndConvertArticle(articleUrl);
+      const renderStrategy = parseRenderStrategy(body.options?.renderStrategy);
+      const article = await fetchAndConvertArticleWithStrategy(articleUrl, env.BROWSER, renderStrategy);
+      return json(article);
+    }
+
+    if (request.method === "POST" && url.pathname === "/v2/archive/rendered") {
+      const body = await readJsonBody(request);
+      const articleUrl = parseUrl(body.url);
+      const article = await fetchAndConvertArticleWithStrategy(articleUrl, env.BROWSER, "always");
       return json(article);
     }
 
@@ -131,8 +169,33 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       const urls = parseUrls(body.urls);
       const mode = parseAsyncMode(body.mode);
       const maxAttempts = parseMaxAttempts(body.options?.maxAttempts);
-      const job = await createJob(env, urls, maxAttempts, mode);
+      const renderStrategy = parseRenderStrategy(body.options?.renderStrategy);
+      const job = await createJob(env, urls, maxAttempts, mode, renderStrategy);
       return json(job, { status: 202 });
+    }
+
+    if (request.method === "POST" && url.pathname === "/v2/screenshots/inline") {
+      const body = await readJsonBody(request);
+      const pageUrl = parsePublicHttpsUrl(body.url);
+      const screenshotOptions = parseScreenshotOptions(body.options);
+      const image = await captureScreenshot(env.BROWSER, pageUrl, screenshotOptions);
+      return screenshotImageResponse(image);
+    }
+
+    if (request.method === "POST" && url.pathname === "/v2/screenshots") {
+      const body = await readJsonBody(request);
+      const pageUrl = parsePublicHttpsUrl(body.url);
+      const screenshotOptions = parseScreenshotOptions(body.options);
+      const screenshotId = crypto.randomUUID();
+      try {
+        const image = await captureScreenshot(env.BROWSER, pageUrl, screenshotOptions);
+        const result = await storeScreenshot(env, screenshotId, pageUrl, image, screenshotOptions);
+        return json(result, { status: 201 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await recordScreenshotFailure(env, screenshotId, pageUrl, screenshotOptions, message);
+        throw error;
+      }
     }
 
     const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
@@ -177,14 +240,22 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return object ? assetResponse(object) : notFound();
     }
 
+    const screenshotMatch = url.pathname.match(/^\/v2\/screenshots\/([^/]+)$/);
+    if (request.method === "GET" && screenshotMatch) {
+      const object = await getScreenshot(env, screenshotMatch[1]);
+      return object ? assetResponse(object) : notFound();
+    }
+
     return notFound();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     const status =
       message.startsWith("Request body") ||
       message.includes("mode must") ||
+      message.includes("renderStrategy") ||
       message.includes("url") ||
-      message.includes("Only public")
+      message.includes("Only public") ||
+      message.includes("Private, local")
         ? 400
         : 500;
     console.error(JSON.stringify({ message: "request failed", path: url.pathname, error: message }));

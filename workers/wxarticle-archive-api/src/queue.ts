@@ -1,4 +1,4 @@
-import { fetchAndConvertArticle, type FetchLike } from "./converter";
+import { fetchAndConvertArticleWithStrategy, type FetchLike } from "./converter";
 import {
   getItem,
   markItemFailed,
@@ -38,7 +38,12 @@ export async function processQueueMessage(
 
   try {
     const mode: AsyncStorageMode = body.mode ?? "md-only";
-    const article = await fetchAndConvertArticle(body.url, fetcher);
+    const article = await fetchAndConvertArticleWithStrategy(
+      body.url,
+      env.BROWSER,
+      body.renderStrategy ?? "fallback",
+      fetcher
+    );
     if (mode === "full" && article.images.length > 0) {
       const cloudImages = await Promise.all(
         article.images.map((imageUrl) => storeImageAsset(env, item, imageUrl, body.url, fetcher))
