@@ -18,6 +18,7 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 
 | Skill | Folder | Purpose |
 | --- | --- | --- |
+| `autodl-api` | `skills/autodl-api/` | Documents AutoDL API workflows for GPU instance and elastic deployment automation. |
 | `wxarticle-archive` | `skills/wxarticle-archive/` | Archives public HTTPS webpages into Markdown, captures screenshots, and keeps a specialized legacy WeChat article mode. |
 
 ### MCP Servers

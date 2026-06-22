@@ -1,0 +1,5 @@
+interface:
+  display_name: "AutoDL API"
+  short_description: "Use AutoDL APIs for GPU instances and deployments"
+  default_prompt: "Use $autodl-api to plan or automate an AutoDL GPU workflow."
+
