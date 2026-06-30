@@ -1,0 +1,4 @@
+interface:
+  display_name: "PowerShell Shell Adapter"
+  short_description: "Run shell commands safely in PowerShell"
+  default_prompt: "Use $powershell-shell to translate and run these commands with correct PowerShell syntax."

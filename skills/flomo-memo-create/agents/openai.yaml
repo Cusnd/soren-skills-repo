@@ -1,0 +1,7 @@
+interface:
+  display_name: "Flomo Memo Create"
+  short_description: "Draft and create Flomo memos"
+  brand_color: "#0F766E"
+  default_prompt: "Use $flomo-memo-create to draft or create a new Flomo memo from my text."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "DIDA CLI"
+  short_description: "Safely operate DIDA tasks via CLI"
+  default_prompt: "Use $dida-cli to inspect and manage my DIDA tasks safely."

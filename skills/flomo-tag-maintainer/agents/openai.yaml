@@ -1,0 +1,7 @@
+interface:
+  display_name: "Flomo Tag Maintainer"
+  short_description: "Search and rename Flomo tags"
+  brand_color: "#25635A"
+  default_prompt: "Use $flomo-tag-maintainer to search Flomo tags or plan a safe tag rename."
+policy:
+  allow_implicit_invocation: true

@@ -93,7 +93,7 @@ function validateSkills() {
       errors.push(`skills/${dirName}/SKILL.md: description is missing or too short`);
     }
 
-    if (/TODO|Replace this/i.test(frontmatter.description ?? "")) {
+    if (/\bTODO\b|[Rr]eplace this/.test(frontmatter.description ?? "")) {
       errors.push(`skills/${dirName}/SKILL.md: description still looks like a placeholder`);
     }
 

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Flomo MCP Guide"
+  short_description: "Current Flomo MCP safety guide"
+  brand_color: "#25635A"
+  default_prompt: "Use $flomo-mcp-guide to choose a safe workflow for the current limited Flomo MCP tools."
+policy:
+  allow_implicit_invocation: true

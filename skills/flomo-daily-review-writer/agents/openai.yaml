@@ -1,0 +1,7 @@
+interface:
+  display_name: "Flomo Review Writer"
+  short_description: "Offline Flomo review writing"
+  brand_color: "#7C3AED"
+  default_prompt: "Use $flomo-daily-review-writer to write a grounded Chinese review from the Flomo notes I provide."
+policy:
+  allow_implicit_invocation: true

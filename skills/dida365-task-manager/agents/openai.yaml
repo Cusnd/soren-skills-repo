@@ -1,0 +1,12 @@
+interface:
+  display_name: "DIDA Task Manager"
+  short_description: "Natural-language DIDA tasks via CLI/MCP"
+  default_prompt: "Use $dida365-task-manager to capture, route, and manage my DIDA tasks safely."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "dida365"
+      description: "Official DIDA MCP server for task, project, habit, focus, and countdown workflows"
+      transport: "streamable_http"
+      url: "https://mcp.dida365.com"

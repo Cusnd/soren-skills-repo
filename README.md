@@ -19,6 +19,13 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 | Skill | Folder | Purpose |
 | --- | --- | --- |
 | `autodl-api` | `skills/autodl-api/` | Documents AutoDL API workflows for GPU instance and elastic deployment automation. |
+| `dida-cli` | `skills/dida-cli/` | Provides cautious terminal workflows for the `@suibiji/dida-cli` Dida365/TickTick command-line tool. |
+| `dida365-task-manager` | `skills/dida365-task-manager/` | Routes natural-language Dida365/TickTick todo requests across CLI and MCP executors. |
+| `flomo-daily-review-writer` | `skills/flomo-daily-review-writer/` | Writes evidence-grounded Chinese daily reviews from user-provided Flomo memo exports or copied notes. |
+| `flomo-mcp-guide` | `skills/flomo-mcp-guide/` | Documents the safe workflow boundary for the current Flomo MCP tool surface. |
+| `flomo-memo-create` | `skills/flomo-memo-create/` | Drafts or creates new Flomo memos from user-provided content using the current MCP. |
+| `flomo-tag-maintainer` | `skills/flomo-tag-maintainer/` | Searches, normalizes, plans, and explicitly renames Flomo tags through the current MCP. |
+| `powershell-shell` | `skills/powershell-shell/` | Guides PowerShell 5.1 and PowerShell 7 command authoring, quoting, error handling, and safety. |
 | `wxarticle-archive` | `skills/wxarticle-archive/` | Archives public HTTPS webpages into Markdown, captures screenshots, and keeps a specialized legacy WeChat article mode. |
 
 ### MCP Servers
