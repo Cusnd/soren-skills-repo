@@ -30,7 +30,6 @@ NOISY_DIRS = {
     ".cache",
     "coverage",
     "wandb",
-    "mlruns",
     "runs",
     "logs",
     "checkpoints",
@@ -66,7 +65,6 @@ DEPENDENCY_NAMES = {
 
 TRACKER_PATTERNS = {
     "tensorboard": ("SummaryWriter", "torch.utils.tensorboard", "tensorboardX", "tensorboard"),
-    "mlflow": ("import mlflow", "mlflow.", "MLFLOW_"),
     "wandb": ("import wandb", "wandb.", "WANDB_"),
     "jsonl_metrics": ("metrics.jsonl", ".jsonl"),
 }
@@ -135,15 +133,13 @@ def classify(root: Path, files: list[Path], max_read_bytes: int) -> dict:
                         tracker_hits[tracker].append(relative)
 
     existing_dirs = []
-    for dirname in ("configs", "src", "scripts", "logs", "runs", "checkpoints", "metrics", "mlruns", "outputs"):
+    for dirname in ("configs", "src", "scripts", "logs", "runs", "checkpoints", "metrics", "outputs"):
         if (root / dirname).is_dir():
             existing_dirs.append(dirname)
 
     missing_observability = []
     if not tracker_hits["tensorboard"]:
         missing_observability.append("tensorboard")
-    if not tracker_hits["mlflow"]:
-        missing_observability.append("mlflow")
     if "logs" not in existing_dirs:
         missing_observability.append("logs")
     if "runs" not in existing_dirs:
@@ -170,8 +166,6 @@ def recommendations(train_entrypoints: list[str], tracker_hits: dict[str, list[s
         items.append("Identify or create a script entrypoint such as train.py before planning remote launch commands.")
     if not tracker_hits["tensorboard"]:
         items.append("Add TensorBoard SummaryWriter logging for real-time training curves.")
-    if not tracker_hits["mlflow"]:
-        items.append("Add MLflow run metadata, params, sampled metrics, and artifact/checkpoint logging.")
     for dirname in ("logs", "runs", "checkpoints"):
         if dirname not in existing_dirs:
             items.append(f"Create or configure a {dirname}/ output directory.")

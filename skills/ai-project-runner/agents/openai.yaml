@@ -1,4 +1,4 @@
 interface:
   display_name: "AI Project Runner"
   short_description: "Remote AI training monitor workflow"
-  default_prompt: "Use $ai-project-runner to prepare a remote TensorBoard and MLflow training workflow for this AI project."
+  default_prompt: "Use $ai-project-runner to prepare a remote auto-updating TensorBoard training workflow for this AI project."

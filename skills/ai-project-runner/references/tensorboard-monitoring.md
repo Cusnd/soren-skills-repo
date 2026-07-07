@@ -7,7 +7,7 @@ Use TensorBoard as the default real-time training dashboard.
 ```python
 from torch.utils.tensorboard import SummaryWriter
 
-writer = SummaryWriter(log_dir=f"runs/{run_name}")
+writer = SummaryWriter(log_dir=f"runs/{run_name}", flush_secs=5, max_queue=10)
 
 for step, batch in enumerate(train_loader):
     loss = train_step(batch)
@@ -15,11 +15,14 @@ for step, batch in enumerate(train_loader):
     if step % 10 == 0:
         writer.add_scalar("train/loss", float(loss.item()), step)
         writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], step)
+        writer.flush()
 
 writer.close()
 ```
 
-Use a `runs/<run_name>` directory and keep `run_name` aligned with the log file, checkpoint directory, MLflow run, and config snapshot.
+Use a `runs/<run_name>` directory and keep `run_name` aligned with the log file, checkpoint directory, metrics JSONL, status file, and config snapshot.
+
+`flush_secs=5` makes the writer flush pending events every few seconds. Call `writer.flush()` after evaluation, checkpoint writes, or each logging interval when near-real-time chart updates matter.
 
 ## Naming Conventions
 
@@ -49,7 +52,7 @@ Run on the remote server:
 
 ```bash
 cd ~/project
-tensorboard --logdir runs --host 127.0.0.1 --port 6006
+tensorboard --logdir runs --host 127.0.0.1 --port 6006 --reload_interval 5
 ```
 
 Tunnel from local:
@@ -64,4 +67,4 @@ Open locally:
 http://localhost:6006
 ```
 
-If TensorBoard is blank, verify that event files exist under `runs/<run_name>` and that the training code flushes or closes the writer.
+If TensorBoard is blank or stale, verify that event files exist under `runs/<run_name>`, the training code flushes or closes the writer, and TensorBoard was started with a short `--reload_interval`.

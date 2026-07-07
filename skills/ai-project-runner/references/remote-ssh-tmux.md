@@ -11,7 +11,6 @@ logs/
 runs/
 checkpoints/
 metrics/
-mlruns/
 ```
 
 Maintain:
@@ -27,7 +26,7 @@ Prefer a named tmux session per run:
 ```bash
 cd ~/project
 export RUN_NAME="exp_$(date +%Y%m%d_%H%M%S)"
-mkdir -p logs runs checkpoints metrics mlruns
+mkdir -p logs runs checkpoints metrics
 ln -sfn "${RUN_NAME}.log" logs/latest.log
 tmux new-session -s "train_${RUN_NAME}"
 ```
@@ -59,7 +58,6 @@ For dashboards, bind on the remote loopback interface and tunnel:
 
 ```bash
 ssh -L 6006:127.0.0.1:6006 user@server
-ssh -L 5000:127.0.0.1:5000 user@server
 ```
 
 ## Remote Logging Rules

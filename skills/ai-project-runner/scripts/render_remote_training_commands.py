@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render remote SSH/tmux/TensorBoard/MLflow command templates."""
+"""Render remote SSH/tmux/TensorBoard command templates."""
 
 from __future__ import annotations
 
@@ -33,25 +33,22 @@ def build(args: argparse.Namespace) -> dict:
     remote_project = args.remote_project.rstrip("/")
     log_path = f"logs/{run_name}.log"
     checkpoint_dir = f"checkpoints/{run_name}"
+    metrics_path = f"metrics/{run_name}.jsonl"
     tensorboard_url = f"http://localhost:{args.tensorboard_port}"
-    mlflow_url = f"http://localhost:{args.mlflow_port}"
 
     remote_prepare = [
         f"cd {q_remote_path(remote_project)}",
-        "mkdir -p logs runs checkpoints metrics mlruns",
+        "mkdir -p logs runs checkpoints metrics",
         f"export RUN_NAME={q(run_name)}",
         f"export CHECKPOINT_DIR={q(checkpoint_dir)}",
+        f"export METRICS_PATH={q(metrics_path)}",
         f"ln -sfn {q(f'{run_name}.log')} logs/latest.log",
     ]
 
-    mlflow_server = (
-        f"cd {q_remote_path(remote_project)} && "
-        f"mlflow server --backend-store-uri sqlite:///mlflow.db "
-        f"--default-artifact-root ./mlruns --host 127.0.0.1 --port {args.mlflow_port}"
-    )
     tensorboard_server = (
         f"cd {q_remote_path(remote_project)} && "
-        f"tensorboard --logdir runs --host 127.0.0.1 --port {args.tensorboard_port}"
+        f"tensorboard --logdir runs --host 127.0.0.1 "
+        f"--port {args.tensorboard_port} --reload_interval {args.tensorboard_reload_interval}"
     )
     train_inside_tmux = (
         "set -o pipefail\n"
@@ -66,16 +63,13 @@ def build(args: argparse.Namespace) -> dict:
         "remote_project": remote_project,
         "log_path": log_path,
         "latest_log": "logs/latest.log",
+        "checkpoint_dir": checkpoint_dir,
+        "metrics_path": metrics_path,
         "tensorboard": {
             "remote_command": tensorboard_server,
             "local_tunnel": f"ssh -L {args.tensorboard_port}:127.0.0.1:{args.tensorboard_port} {args.ssh_target}",
             "local_url": tensorboard_url,
-        },
-        "mlflow": {
-            "remote_command": mlflow_server,
-            "local_tunnel": f"ssh -L {args.mlflow_port}:127.0.0.1:{args.mlflow_port} {args.ssh_target}",
-            "local_url": mlflow_url,
-            "tracking_uri": f"http://127.0.0.1:{args.mlflow_port}",
+            "reload_interval_seconds": args.tensorboard_reload_interval,
         },
         "training": {
             "start_tmux": f"ssh {args.ssh_target} {q(f'tmux new-session -s {session}')}",
@@ -84,9 +78,10 @@ def build(args: argparse.Namespace) -> dict:
             "tail_log": f"ssh {args.ssh_target} {q(f'tail -f {q_remote_path(remote_project)}/logs/latest.log')}",
         },
         "notes": [
-            "Start MLflow and TensorBoard in their own tmux sessions or service windows before training.",
+            "Start TensorBoard in its own tmux session or service window before training.",
             "Paste commands_inside_tmux after creating or attaching to the training tmux session.",
-            "Keep dashboard services bound to 127.0.0.1 on the remote host and use SSH tunnels locally.",
+            "Keep TensorBoard bound to 127.0.0.1 on the remote host and use an SSH tunnel locally.",
+            "Use SummaryWriter flush_secs=5 and writer.flush() after important logging intervals for near-real-time charts.",
         ],
     }
 
@@ -94,24 +89,17 @@ def build(args: argparse.Namespace) -> dict:
 def print_markdown(commands: dict) -> None:
     print(f"# Remote Training Commands: {commands['run_name']}")
     print()
-    print("## Start MLflow on remote")
-    print("```bash")
-    print(commands["mlflow"]["remote_command"])
-    print("```")
-    print()
     print("## Start TensorBoard on remote")
     print("```bash")
     print(commands["tensorboard"]["remote_command"])
     print("```")
     print()
-    print("## Open local tunnels")
+    print("## Open local tunnel")
     print("```powershell")
     print(commands["tensorboard"]["local_tunnel"])
-    print(commands["mlflow"]["local_tunnel"])
     print("```")
     print()
     print(f"TensorBoard: {commands['tensorboard']['local_url']}")
-    print(f"MLflow: {commands['mlflow']['local_url']}")
     print()
     print("## Start training tmux")
     print("```powershell")
@@ -142,7 +130,7 @@ def main() -> int:
     parser.add_argument("--train-command", required=True, help="Training command to run inside the remote project.")
     parser.add_argument("--tmux-session", help="Optional tmux session name.")
     parser.add_argument("--tensorboard-port", type=int, default=6006)
-    parser.add_argument("--mlflow-port", type=int, default=5000)
+    parser.add_argument("--tensorboard-reload-interval", type=int, default=5)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     args = parser.parse_args()
 

@@ -14,7 +14,6 @@ project/
   runs/
   checkpoints/
   metrics/
-  mlruns/
 ```
 
 `train.py` should accept at least:
@@ -23,7 +22,7 @@ project/
 - run name
 - output root or checkpoint directory
 - resume checkpoint when supported
-- tracking URI or tracking mode when supported
+- output root or metrics path when supported
 
 ## Minimal Run Metadata
 
@@ -36,9 +35,10 @@ Each run should preserve:
 - git commit and dirty state when available
 - package/environment summary when practical
 - TensorBoard run directory
-- MLflow experiment and run id when available
+- TensorBoard URL
 - checkpoint directory
 - log file path
+- metrics JSONL path when used
 
 ## Output Rules
 
@@ -50,7 +50,7 @@ Each run should preserve:
 
 ## Config Rules
 
-Prefer checked-in YAML/TOML/JSON configs for stable experiments. Do not hide important hyperparameters only in shell history. For one-off overrides, record them in MLflow params and in the run log.
+Prefer checked-in YAML/TOML/JSON configs for stable experiments. Do not hide important hyperparameters only in shell history. For one-off overrides, record them in the run log, config snapshot, status file, or metrics JSONL metadata.
 
 ## Dependency Rules
 

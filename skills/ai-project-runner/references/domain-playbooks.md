@@ -10,7 +10,7 @@ Track:
 - `eval/loss`, `eval/perplexity`
 - task metrics such as exact match, F1, ROUGE, BLEU, win rate, or judge score when relevant
 
-Preserve tokenizer/config files and the exact base model id. Be careful with checkpoint size; log selected checkpoints or metadata to MLflow unless storage policy is clear.
+Preserve tokenizer/config files and the exact base model id. Be careful with checkpoint size; keep selected checkpoints under `checkpoints/<run_name>` and record metadata in the run log or `status.md`.
 
 ## RL and PPO
 
