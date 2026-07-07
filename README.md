@@ -18,6 +18,7 @@ A public workspace for maintaining Codex skills, Model Context Protocol (MCP) se
 
 | Skill | Folder | Purpose |
 | --- | --- | --- |
+| `ai-project-runner` | `skills/ai-project-runner/` | Prepares observable remote AI training workflows with SSH/tmux, TensorBoard monitoring, MLflow tracking, logs, and checkpoints. |
 | `autodl-api` | `skills/autodl-api/` | Documents AutoDL API workflows for GPU instance and elastic deployment automation. |
 | `dida-cli` | `skills/dida-cli/` | Provides cautious terminal workflows for the `@suibiji/dida-cli` Dida365/TickTick command-line tool. |
 | `dida365-task-manager` | `skills/dida365-task-manager/` | Routes natural-language Dida365/TickTick todo requests across CLI and MCP executors. |
